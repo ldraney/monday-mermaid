@@ -7,6 +7,36 @@ import { useState, useEffect } from 'react'
 import MermaidDiagram from '@/components/MermaidDiagram'
 import type { OrganizationalStructure, ApiState } from '@/lib/types'
 
+// Simple StatCard component (inline)
+function StatCard({ title, value, icon, description }: {
+  title: string
+  value: number
+  icon: string
+  description: string
+}) {
+  return (
+    <div style={{
+      backgroundColor: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '0.5rem',
+      padding: '1.5rem',
+      textAlign: 'center',
+      minWidth: '200px'
+    }}>
+      <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{icon}</div>
+      <div style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '0.25rem', color: '#1f2937' }}>
+        {value.toLocaleString()}
+      </div>
+      <div style={{ fontWeight: '600', marginBottom: '0.25rem', color: '#374151' }}>
+        {title}
+      </div>
+      <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+        {description}
+      </div>
+    </div>
+  )
+}
+
 export default function HomePage() {
   const [orgData, setOrgData] = useState<ApiState<OrganizationalStructure>>({
     data: null,
