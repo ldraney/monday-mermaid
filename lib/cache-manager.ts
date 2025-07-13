@@ -329,4 +329,108 @@ export class CacheManager {
       }
 
       // Check cache age
-      const cacheAge = (Date.now() - orgData.lastScanned.getTime())
+      const cacheAge = (Date.now() - orgData.lastScanned.getTime()) / (1000 * 60 * 60)
+      if (cacheAge > config.database.defaultTtlHours * 2) {
+        issues.push(`Cache is very old (${cacheAge.toFixed(1)} hours)`)
+      }
+
+      return {
+        isValid: issues.length === 0,
+        issues,
+      }
+      
+    } catch (error) {
+      return {
+        isValid: false,
+        issues: [`Cache validation failed: ${error}`],
+      }
+    }
+  }
+
+  async clearCache(): Promise<void> {
+    console.log('🗑️ Clearing cache (this will require a full resync)...')
+    // This would delete all cached data - implement with caution!
+    // For now, just log the intention
+    console.log('Cache clear not implemented (safety measure)')
+  }
+}
+
+// =============================================================================
+// EXPORT DEFAULT INSTANCE
+// =============================================================================
+
+export const cacheManager = new CacheManager()
+
+// =============================================================================
+// CONVENIENCE FUNCTIONS
+// =============================================================================
+
+export async function ensureFreshData(): Promise<OrganizationalStructure> {
+  return await cacheManager.smartSync()
+}
+
+export async function quickSync(): Promise<OrganizationalStructure> {
+  const status = await cacheManager.getCacheStatus()
+  
+  if (!status.isHealthy) {
+    return await cacheManager.fullSync()
+  } else {
+    return await getOrganizationalStructure()
+  }
+}
+
+export async function forceRefresh(): Promise<OrganizationalStructure> {
+  return await cacheManager.fullSync({ forceRefresh: true })
+} / (1000 * 60 * 60)
+      if (cacheAge > config.database.defaultTtlHours * 2) {
+        issues.push(`Cache is very old (${cacheAge.toFixed(1)} hours)`)
+      }
+
+      return {
+        isValid: issues.length === 0,
+        issues,
+      }
+      
+    } catch (error) {
+      return {
+        isValid: false,
+        issues: [`Cache validation failed: ${error}`],
+      }
+    }
+  }
+
+  async clearCache(): Promise<void> {
+    console.log('🗑️ Clearing cache (this will require a full resync)...')
+    // This would delete all cached data - implement with caution!
+    // For now, just log the intention
+    console.log('Cache clear not implemented (safety measure)')
+  }
+}
+
+// =============================================================================
+// EXPORT DEFAULT INSTANCE
+// =============================================================================
+
+export const cacheManager = new CacheManager()
+
+// =============================================================================
+// CONVENIENCE FUNCTIONS
+// =============================================================================
+
+export async function ensureFreshData(): Promise<OrganizationalStructure> {
+  return await cacheManager.smartSync()
+}
+
+export async function quickSync(): Promise<OrganizationalStructure> {
+  const status = await cacheManager.getCacheStatus()
+  
+  if (!status.isHealthy) {
+    return await cacheManager.fullSync()
+  } else {
+    return await getOrganizationalStructure()
+  }
+}
+
+export async function forceRefresh(): Promise<OrganizationalStructure> {
+  return await cacheManager.fullSync({ forceRefresh: true })
+}
