@@ -112,6 +112,7 @@ export class MondayAPI {
   }
 
   async getWorkspaces(): Promise<MondayWorkspace[]> {
+    // Fixed query - only use fields that actually exist
     const query = `
       query GetWorkspaces {
         workspaces {
@@ -119,15 +120,20 @@ export class MondayAPI {
           name
           kind
           description
-          settings {
-            product_kind
-          }
         }
       }
     `
 
-    const result = await this.query<{ workspaces: MondayWorkspace[] }>(query)
-    return result.workspaces
+    const result = await this.query<{ workspaces: any[] }>(query)
+    
+    // Transform to match our interface
+    return result.workspaces.map(workspace => ({
+      id: workspace.id,
+      name: workspace.name,
+      kind: workspace.kind || 'open',
+      description: workspace.description || null,
+      // Remove settings field since it doesn't work
+    }))
   }
 
   async getBoardsInWorkspace(workspaceId: string, options: DiscoveryOptions = {}): Promise<MondayBoard[]> {

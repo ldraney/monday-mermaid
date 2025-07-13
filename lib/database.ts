@@ -219,7 +219,7 @@ export async function getBoardById(boardId: string): Promise<CachedBoard | null>
 }
 
 // =============================================================================
-// COLUMN OPERATIONS
+// COLUMN OPERATIONS (FIXED VERSION)
 // =============================================================================
 
 export async function saveColumns(boardId: string, columns: MondayColumn[]): Promise<void> {
@@ -238,7 +238,18 @@ export async function saveColumns(boardId: string, columns: MondayColumn[]): Pro
     position: column.pos || null,
   }))
 
-  await sql`INSERT INTO columns ${sql(values)}`
+  // Use UPSERT to handle duplicate column IDs gracefully
+  await sql`
+    INSERT INTO columns ${sql(values)}
+    ON CONFLICT (id) DO UPDATE SET
+      board_id = EXCLUDED.board_id,
+      title = EXCLUDED.title,
+      type = EXCLUDED.type,
+      settings_str = EXCLUDED.settings_str,
+      archived = EXCLUDED.archived,
+      position = EXCLUDED.position,
+      last_synced = CURRENT_TIMESTAMP
+  `
 
   console.log(`💾 Saved ${columns.length} columns for board ${boardId}`)
 }
