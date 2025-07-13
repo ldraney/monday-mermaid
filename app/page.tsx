@@ -3,11 +3,127 @@
 
 'use client'
 
-import type { DashboardState } from '@/lib/types'
+import { useState, useEffect } from 'react'
+import MermaidDiagram from '@/components/MermaidDiagram'
+import type { OrganizationalStructure, ApiState } from '@/lib/types'
 
 export default function HomePage() {
-  // This will eventually be populated from Monday.com API
-  const mockStats = {
+  const [orgData, setOrgData] = useState<ApiState<OrganizationalStructure>>({
+    data: null,
+    status: 'idle',
+    error: null
+  })
+  const [selectedBoard, setSelectedBoard] = useState<string | null>(null)
+  const [diagramType, setDiagramType] = useState<'organization' | 'connections' | 'health'>('organization')
+  const [currentDiagram, setCurrentDiagram] = useState<{
+    diagram: string
+    title: string
+  } | null>(null)
+  const [diagramLoading, setDiagramLoading] = useState(false)
+
+  // Discover organization data
+  const discoverOrganization = async () => {
+    setOrgData(prev => ({ ...prev, status: 'loading', error: null }))
+    
+    try {
+      const response = await fetch('/api/sync', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'smart' })
+      })
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to sync data')
+      }
+      
+      setOrgData({
+        data: result.data,
+        status: 'success',
+        error: null,
+        lastFetched: new Date()
+      })
+    } catch (error) {
+      setOrgData(prev => ({
+        ...prev,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }))
+    }
+  }
+
+  // Generate Mermaid diagram
+  const generateDiagram = async () => {
+    if (!orgData.data) return
+
+    setDiagramLoading(true)
+    
+    try {
+      let requestBody: any = { type: diagramType }
+      
+      if (diagramType === 'connections') {
+        if (!selectedBoard) {
+          setCurrentDiagram(null)
+          setDiagramLoading(false)
+          return
+        }
+        requestBody.boardId = selectedBoard
+      } else if (diagramType === 'organization') {
+        requestBody.options = { showInactive: false, colorByHealth: true }
+      }
+
+      const response = await fetch('/api/diagram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to generate diagram')
+      }
+      
+      setCurrentDiagram({
+        diagram: result.diagram,
+        title: result.title
+      })
+    } catch (error) {
+      console.error('Failed to generate diagram:', error)
+      setCurrentDiagram(null)
+    } finally {
+      setDiagramLoading(false)
+    }
+  }
+
+  // Auto-generate diagram when data or type changes
+  useEffect(() => {
+    if (orgData.data) {
+      generateDiagram()
+    }
+  }, [orgData.data, diagramType, selectedBoard])
+
+  // Handle node clicks in diagrams (enables "Show Connections" interactivity)
+  const handleNodeClick = async (nodeId: string) => {
+    if (!orgData.data) return
+    
+    // Extract board ID from mermaid node ID (format is usually n0, n1, etc.)
+    // We need to find the actual board ID from the node click
+    console.log('Node clicked:', nodeId)
+    
+    // For now, if we're not in connections mode, switch to it
+    if (diagramType !== 'connections') {
+      setDiagramType('connections')
+    }
+  }
+
+  const stats = orgData.data ? {
+    workspaces: orgData.data.healthMetrics.totalWorkspaces,
+    boards: orgData.data.healthMetrics.totalBoards,
+    activeBoards: orgData.data.healthMetrics.activeBoards,
+    totalItems: orgData.data.healthMetrics.totalItems,
+    lastScan: new Date(orgData.data.lastScanned).toLocaleString()
+  } : {
     workspaces: 0,
     boards: 0,
     activeBoards: 0,
@@ -44,62 +160,98 @@ export default function HomePage() {
         }}>
           <button
             style={{
-              backgroundColor: '#3b82f6',
+              backgroundColor: orgData.status === 'loading' ? '#9ca3af' : '#3b82f6',
               color: 'white',
               padding: '0.75rem 1.5rem',
               border: 'none',
               borderRadius: '0.5rem',
               fontSize: '1rem',
               fontWeight: '500',
-              cursor: 'pointer',
+              cursor: orgData.status === 'loading' ? 'not-allowed' : 'pointer',
               transition: 'background-color 0.2s'
             }}
-            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-            onClick={() => alert('Monday.com API integration coming next!')}
+            disabled={orgData.status === 'loading'}
+            onClick={discoverOrganization}
           >
-            🔍 Discover Organization
+            {orgData.status === 'loading' ? '🔄 Discovering...' : '🔍 Discover Organization'}
           </button>
           
           <button
             style={{
-              backgroundColor: '#10b981',
+              backgroundColor: diagramType === 'connections' ? '#059669' : '#10b981',
               color: 'white',
               padding: '0.75rem 1.5rem',
               border: 'none',
               borderRadius: '0.5rem',
               fontSize: '1rem',
               fontWeight: '500',
-              cursor: 'pointer',
-              transition: 'background-color 0.2s'
+              cursor: orgData.data ? 'pointer' : 'not-allowed',
+              transition: 'background-color 0.2s',
+              opacity: orgData.data ? 1 : 0.5
             }}
-            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#059669'}
-            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#10b981'}
-            onClick={() => alert('Show Connections feature coming soon!')}
+            disabled={!orgData.data}
+            onClick={() => setDiagramType('connections')}
           >
             🕸️ Show Connections
           </button>
 
           <button
             style={{
-              backgroundColor: '#f59e0b',
+              backgroundColor: diagramType === 'health' ? '#d97706' : '#f59e0b',
               color: 'white',
               padding: '0.75rem 1.5rem',
               border: 'none',
               borderRadius: '0.5rem',
               fontSize: '1rem',
               fontWeight: '500',
-              cursor: 'pointer',
-              transition: 'background-color 0.2s'
+              cursor: orgData.data ? 'pointer' : 'not-allowed',
+              transition: 'background-color 0.2s',
+              opacity: orgData.data ? 1 : 0.5
             }}
-            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#d97706'}
-            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f59e0b'}
-            onClick={() => alert('Health Analysis coming soon!')}
+            disabled={!orgData.data}
+            onClick={() => setDiagramType('health')}
           >
             🏥 Health Check
           </button>
+
+          <button
+            style={{
+              backgroundColor: diagramType === 'organization' ? '#7c3aed' : '#8b5cf6',
+              color: 'white',
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderRadius: '0.5rem',
+              fontSize: '1rem',
+              fontWeight: '500',
+              cursor: orgData.data ? 'pointer' : 'not-allowed',
+              transition: 'background-color 0.2s',
+              opacity: orgData.data ? 1 : 0.5
+            }}
+            disabled={!orgData.data}
+            onClick={() => setDiagramType('organization')}
+          >
+            📊 Organization Chart
+          </button>
         </div>
       </section>
+
+      {/* Error Display */}
+      {orgData.error && (
+        <section style={{ marginBottom: '2rem' }}>
+          <div style={{
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '0.5rem',
+            padding: '1rem',
+            color: '#991b1b'
+          }}>
+            <strong>Error:</strong> {orgData.error}
+            <div style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+              Make sure your MONDAY_API_KEY is set correctly in your environment variables.
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Stats Grid */}
       <section style={{ marginBottom: '3rem' }}>
@@ -119,32 +271,76 @@ export default function HomePage() {
         }}>
           <StatCard 
             title="Workspaces" 
-            value={mockStats.workspaces}
+            value={stats.workspaces}
             icon="🏢"
             description="Total workspaces"
           />
           <StatCard 
             title="Boards" 
-            value={mockStats.boards}
+            value={stats.boards}
             icon="📋"
             description="Total boards"
           />
           <StatCard 
             title="Active Boards" 
-            value={mockStats.activeBoards}
+            value={stats.activeBoards}
             icon="✅"
             description="Currently active"
           />
           <StatCard 
             title="Total Items" 
-            value={mockStats.totalItems}
+            value={stats.totalItems}
             icon="📝"
             description="Across all boards"
           />
         </div>
+        
+        <div style={{ 
+          textAlign: 'center', 
+          marginTop: '1rem', 
+          fontSize: '0.875rem', 
+          color: '#64748b' 
+        }}>
+          Last scanned: {stats.lastScan}
+        </div>
       </section>
 
-      {/* Preview Area */}
+      {/* Board Selection (for connections view) */}
+      {diagramType === 'connections' && orgData.data && (
+        <section style={{ marginBottom: '2rem' }}>
+          <label style={{ 
+            display: 'block', 
+            marginBottom: '0.5rem', 
+            fontWeight: '500',
+            color: '#374151'
+          }}>
+            Select board to show connections:
+          </label>
+          <select
+            value={selectedBoard || ''}
+            onChange={(e) => setSelectedBoard(e.target.value || null)}
+            style={{
+              width: '100%',
+              maxWidth: '400px',
+              padding: '0.5rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '0.375rem',
+              fontSize: '0.875rem'
+            }}
+          >
+            <option value="">Choose a board...</option>
+            {orgData.data.boards
+              .filter(board => board.state === 'active')
+              .map(board => (
+                <option key={board.id} value={board.id}>
+                  {board.name} ({board.workspace?.name})
+                </option>
+              ))}
+          </select>
+        </section>
+      )}
+
+      {/* Interactive Diagram Display */}
       <section>
         <h2 style={{ 
           fontSize: '1.5rem', 
@@ -152,109 +348,116 @@ export default function HomePage() {
           marginBottom: '1.5rem',
           color: '#1e293b'
         }}>
-          Organizational Diagram Preview
+          {diagramType === 'organization' && 'Organization Structure'}
+          {diagramType === 'connections' && 'Board Connections'}
+          {diagramType === 'health' && 'Health Dashboard'}
         </h2>
         
-        <div style={{
-          backgroundColor: '#ffffff',
-          border: '2px dashed #e2e8f0',
-          borderRadius: '0.75rem',
-          padding: '3rem',
-          textAlign: 'center',
-          minHeight: '300px',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center'
-        }}>
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>
-            🎯
-          </div>
-          <h3 style={{ 
-            fontSize: '1.25rem', 
-            fontWeight: '600', 
-            marginBottom: '0.5rem',
-            color: '#1e293b'
-          }}>
-            Ready for Monday.com Integration
-          </h3>
-          <p style={{ 
-            color: '#64748b',
-            marginBottom: '1.5rem',
-            maxWidth: '500px'
-          }}>
-            Connect your Monday.com account to see beautiful Mermaid diagrams of your 
-            organizational structure, board relationships, and health analytics.
-          </p>
+        {/* Diagram States */}
+        {orgData.status === 'idle' && (
           <div style={{
-            backgroundColor: '#f1f5f9',
-            padding: '1rem',
-            borderRadius: '0.5rem',
-            fontSize: '0.875rem',
-            color: '#475569'
+            backgroundColor: '#ffffff',
+            border: '2px dashed #e2e8f0',
+            borderRadius: '0.75rem',
+            padding: '3rem',
+            textAlign: 'center',
+            minHeight: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center'
           }}>
-            Next: Add Monday.com API integration and PostgreSQL caching
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎯</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Ready for Monday.com Integration
+            </h3>
+            <p style={{ color: '#64748b', textAlign: 'center', maxWidth: '500px' }}>
+              Click "Discover Organization" to connect to your Monday.com account and visualize 
+              your organizational structure with interactive diagrams.
+            </p>
           </div>
-        </div>
+        )}
+        
+        {orgData.status === 'loading' && (
+          <div style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '0.75rem',
+            padding: '3rem',
+            textAlign: 'center',
+            minHeight: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🔄</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Discovering Organization...
+            </h3>
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              Fetching workspaces, boards, and relationships from Monday.com...
+            </p>
+          </div>
+        )}
+        
+        {orgData.status === 'success' && !currentDiagram && !diagramLoading && (
+          <div style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '0.75rem',
+            padding: '3rem',
+            textAlign: 'center',
+            minHeight: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📊</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Select a Board for Connections
+            </h3>
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              {diagramType === 'connections' 
+                ? 'Choose a board from the dropdown above to see its connections.'
+                : 'Preparing diagram...'}
+            </p>
+          </div>
+        )}
+        
+        {diagramLoading && (
+          <div style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '0.75rem',
+            padding: '3rem',
+            textAlign: 'center',
+            minHeight: '400px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚡</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Generating Diagram...
+            </h3>
+            <p style={{ color: '#64748b', textAlign: 'center' }}>
+              Creating your interactive organizational visualization...
+            </p>
+          </div>
+        )}
+        
+        {orgData.status === 'success' && currentDiagram && !diagramLoading && (
+          <MermaidDiagram
+            diagram={currentDiagram.diagram}
+            title={currentDiagram.title}
+            onNodeClick={handleNodeClick}
+            style={{ minHeight: '500px' }}
+          />
+        )}
       </section>
-    </div>
-  )
-}
-
-// Reusable StatCard component
-function StatCard({ 
-  title, 
-  value, 
-  icon, 
-  description 
-}: { 
-  title: string
-  value: number | string
-  icon: string
-  description: string
-}) {
-  return (
-    <div style={{
-      backgroundColor: '#ffffff',
-      padding: '1.5rem',
-      borderRadius: '0.75rem',
-      border: '1px solid #e2e8f0',
-      boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
-    }}>
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        marginBottom: '0.75rem' 
-      }}>
-        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>
-          {icon}
-        </span>
-        <h3 style={{ 
-          fontSize: '0.875rem', 
-          fontWeight: '500', 
-          color: '#64748b',
-          margin: 0
-        }}>
-          {title}
-        </h3>
-      </div>
-      
-      <div style={{ 
-        fontSize: '2rem', 
-        fontWeight: '700', 
-        color: '#1e293b',
-        marginBottom: '0.25rem'
-      }}>
-        {value}
-      </div>
-      
-      <p style={{ 
-        fontSize: '0.75rem', 
-        color: '#94a3b8',
-        margin: 0
-      }}>
-        {description}
-      </p>
     </div>
   )
 }
