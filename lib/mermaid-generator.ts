@@ -1,4 +1,4 @@
-// lib/mermaid-generator.ts
+// lib/mermaid-generator.ts - OPTIMIZED VERSION
 // Dynamic Mermaid diagram generation engine for organizational visualization
 
 import type { 
@@ -25,23 +25,38 @@ export class MermaidGenerator {
     maxDepth?: number
     workspaceFilter?: string[]
     colorByHealth?: boolean
+    maxWorkspaces?: number
+    maxBoardsPerWorkspace?: number
   } = {}): string {
     this.reset()
 
-    const { showInactive = false, maxDepth = 3, workspaceFilter, colorByHealth = true } = options
+    const { 
+      showInactive = false, 
+      maxDepth = 3, 
+      workspaceFilter, 
+      colorByHealth = true,
+      maxWorkspaces = 10, // LIMIT FOR PERFORMANCE
+      maxBoardsPerWorkspace = 8 // LIMIT FOR PERFORMANCE
+    } = options
 
     let diagram = `graph TD\n`
     let styles = ``
     
-    // Filter workspaces if specified
-    const workspaces = workspaceFilter 
+    // Filter and limit workspaces for performance
+    let workspaces = workspaceFilter 
       ? orgData.workspaces.filter(w => workspaceFilter.includes(w.id))
       : orgData.workspaces
 
-    // Add organization root (optional, for large orgs)
+    // IMPORTANT: Limit workspaces to prevent diagram explosion
+    if (workspaces.length > maxWorkspaces) {
+      console.log(`🚨 Limiting diagram to ${maxWorkspaces} workspaces (of ${workspaces.length} total) for performance`)
+      workspaces = workspaces.slice(0, maxWorkspaces)
+    }
+
+    // Add organization root if multiple workspaces
     const orgNode = this.createNodeId('org')
     if (workspaces.length > 1) {
-      diagram += `    ${orgNode}["🏢 Organization<br/>${orgData.healthMetrics.totalBoards} boards"]]\n`
+      diagram += `    ${orgNode}["🏢 Organization<br/>${orgData.healthMetrics.totalBoards} boards<br/>(Showing ${workspaces.length}/${orgData.workspaces.length} workspaces)"]\n`
       styles += `    classDef orgStyle fill:#1e293b,stroke:#334155,stroke-width:3px,color:#ffffff\n`
       styles += `    class ${orgNode} orgStyle\n`
     }
@@ -57,12 +72,15 @@ export class MermaidGenerator {
         diagram += `    ${orgNode} --> ${workspaceNode}\n`
       }
 
-      // Add boards for this workspace
+      // Add boards for this workspace (LIMITED)
       const filteredBoards = showInactive 
         ? workspaceBoards
         : workspaceBoards.filter(board => board.state === 'active')
 
-      for (const board of filteredBoards.slice(0, config.mermaid.maxNodesPerDiagram / workspaces.length)) {
+      // PERFORMANCE LIMIT: Only show first N boards per workspace
+      const limitedBoards = filteredBoards.slice(0, maxBoardsPerWorkspace)
+      
+      for (const board of limitedBoards) {
         const boardNode = this.createNodeId(board.id)
         const boardLabel = this.createBoardLabel(board)
         
@@ -74,31 +92,33 @@ export class MermaidGenerator {
           const healthClass = this.getHealthClass(board)
           styles += `    class ${boardNode} ${healthClass}\n`
         }
+      }
 
-        // Add board connections if maxDepth allows
-        if (maxDepth > 2) {
-          const connections = orgData.relationships.filter(rel => 
-            rel.sourceBoard.id === board.id || rel.targetBoard.id === board.id
-          )
-
-          for (const connection of connections.slice(0, 5)) { // Limit connections to prevent clutter
-            const otherBoard = connection.sourceBoard.id === board.id 
-              ? connection.targetBoard 
-              : connection.sourceBoard
-            
-            if (filteredBoards.some(b => b.id === otherBoard.id)) {
-              const otherNode = this.createNodeId(otherBoard.id)
-              const connectionLabel = this.getConnectionLabel(connection.type)
-              
-              diagram += `    ${boardNode} -.${connectionLabel}.- ${otherNode}\n`
-            }
-          }
-        }
+      // Show truncation message if there are more boards
+      if (filteredBoards.length > maxBoardsPerWorkspace) {
+        const moreNode = this.createNodeId(`more_${workspace.id}`)
+        const hiddenCount = filteredBoards.length - maxBoardsPerWorkspace
+        diagram += `    ${moreNode}["... and ${hiddenCount} more boards"]\n`
+        diagram += `    ${workspaceNode} --> ${moreNode}\n`
+        styles += `    classDef moreStyle fill:#f3f4f6,stroke:#d1d5db,stroke-width:1px,color:#6b7280\n`
+        styles += `    class ${moreNode} moreStyle\n`
       }
 
       // Add workspace styling
       styles += `    classDef workspaceStyle fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#ffffff\n`
       styles += `    class ${workspaceNode} workspaceStyle\n`
+    }
+
+    // Add truncation message if there are more workspaces
+    if (orgData.workspaces.length > maxWorkspaces) {
+      const moreWsNode = this.createNodeId('more_workspaces')
+      const hiddenWsCount = orgData.workspaces.length - maxWorkspaces
+      diagram += `    ${moreWsNode}["... and ${hiddenWsCount} more workspaces"]\n`
+      if (workspaces.length > 1) {
+        diagram += `    ${orgNode} --> ${moreWsNode}\n`
+      }
+      styles += `    classDef moreStyle fill:#f3f4f6,stroke:#d1d5db,stroke-width:1px,color:#6b7280\n`
+      styles += `    class ${moreWsNode} moreStyle\n`
     }
 
     // Add health-based style definitions
@@ -135,8 +155,8 @@ export class MermaidGenerator {
 
     const connectedBoardIds = new Set<string>()
     
-    // Add directly connected boards
-    for (const rel of relationships) {
+    // Add directly connected boards (limited for performance)
+    for (const rel of relationships.slice(0, 10)) { // LIMIT CONNECTIONS
       const otherBoard = rel.sourceBoard.id === boardId ? rel.targetBoard : rel.sourceBoard
       const otherNode = this.createNodeId(otherBoard.id)
       
@@ -160,34 +180,13 @@ export class MermaidGenerator {
       styles += `    class ${otherNode} ${healthClass}\n`
     }
 
-    // If depth > 1, add second-level connections
-    if (depth > 1) {
-      for (const connectedBoardId of connectedBoardIds) {
-        const secondLevelRels = orgData.relationships.filter(rel => 
-          (rel.sourceBoard.id === connectedBoardId || rel.targetBoard.id === connectedBoardId) &&
-          rel.sourceBoard.id !== boardId && rel.targetBoard.id !== boardId
-        )
-
-        for (const rel of secondLevelRels.slice(0, 3)) { // Limit second-level connections
-          const otherBoard = rel.sourceBoard.id === connectedBoardId ? rel.targetBoard : rel.sourceBoard
-          
-          if (!connectedBoardIds.has(otherBoard.id)) {
-            const otherNode = this.createNodeId(otherBoard.id)
-            diagram += `    ${otherNode}[${this.createBoardLabel(otherBoard)}]\n`
-            
-            const connectedNode = this.createNodeId(connectedBoardId)
-            const connectionLabel = this.getConnectionLabel(rel.type)
-            
-            diagram += `    ${connectedNode} -.${connectionLabel}.- ${otherNode}\n`
-            
-            // Style second-level boards differently
-            styles += `    classDef secondLevel fill:#e2e8f0,stroke:#94a3b8,stroke-width:1px,color:#1e293b\n`
-            styles += `    class ${otherNode} secondLevel\n`
-            
-            connectedBoardIds.add(otherBoard.id)
-          }
-        }
-      }
+    // Show truncation if there are many relationships
+    if (relationships.length > 10) {
+      const moreNode = this.createNodeId('more_connections')
+      diagram += `    ${moreNode}["... and ${relationships.length - 10} more connections"]\n`
+      diagram += `    ${centralNode} -.-> ${moreNode}\n`
+      styles += `    classDef moreStyle fill:#f3f4f6,stroke:#d1d5db,stroke-width:1px,color:#6b7280\n`
+      styles += `    class ${moreNode} moreStyle\n`
     }
 
     // Add health styles
@@ -217,15 +216,28 @@ export class MermaidGenerator {
     const activeBoards = workspaceBoards.filter(board => board.state === 'active')
     const archivedBoards = workspaceBoards.filter(board => board.state === 'archived')
 
+    // PERFORMANCE LIMIT: Only show first 15 boards
+    const maxBoards = 15
+    const limitedActiveBoards = activeBoards.slice(0, maxBoards)
+
     // Add active boards
-    if (activeBoards.length > 0) {
-      for (const board of activeBoards) {
+    if (limitedActiveBoards.length > 0) {
+      for (const board of limitedActiveBoards) {
         const boardNode = this.createNodeId(board.id)
         diagram += `    ${boardNode}[${this.createBoardLabel(board)}]\n`
         diagram += `    ${workspaceNode} --> ${boardNode}\n`
         
         const healthClass = this.getHealthClass(board)
         styles += `    class ${boardNode} ${healthClass}\n`
+      }
+
+      // Show truncation if there are more active boards
+      if (activeBoards.length > maxBoards) {
+        const moreNode = this.createNodeId('more_active')
+        diagram += `    ${moreNode}["... and ${activeBoards.length - maxBoards} more active boards"]\n`
+        diagram += `    ${workspaceNode} --> ${moreNode}\n`
+        styles += `    classDef moreStyle fill:#f3f4f6,stroke:#d1d5db,stroke-width:1px,color:#6b7280\n`
+        styles += `    class ${moreNode} moreStyle\n`
       }
     }
 
@@ -257,7 +269,7 @@ export class MermaidGenerator {
     // Organization health overview
     const healthNode = this.createNodeId('health')
     const healthScore = this.calculateOverallHealthScore(orgData)
-    diagram += `    ${healthNode}["🏥 Organization Health<br/>Score: ${healthScore}/100"]\n`
+    diagram += `    ${healthNode}["🏥 Organization Health<br/>Score: ${healthScore}/100<br/>${orgData.workspaces.length} workspaces, ${orgData.boards.length} boards"]\n`
 
     // Health categories
     const categories = [
@@ -277,14 +289,21 @@ export class MermaidGenerator {
       styles += `    class ${categoryNode} ${statusClass}\n`
     }
 
-    // Add workspace health breakdown
-    for (const workspace of orgData.workspaces.slice(0, 5)) { // Limit to prevent clutter
-      const workspaceBoards = orgData.boards.filter(board => board.workspace?.id === workspace.id)
-      const activeCount = workspaceBoards.filter(board => board.state === 'active').length
-      const workspaceScore = this.calculateWorkspaceHealth(workspace, workspaceBoards)
+    // Add top 5 workspaces by board count (limited for performance)
+    const topWorkspaces = orgData.workspaces
+      .map(workspace => ({
+        workspace,
+        boardCount: orgData.boards.filter(board => board.workspace?.id === workspace.id).length,
+        activeCount: orgData.boards.filter(board => board.workspace?.id === workspace.id && board.state === 'active').length
+      }))
+      .sort((a, b) => b.boardCount - a.boardCount)
+      .slice(0, 5) // LIMIT TO TOP 5
+
+    for (const { workspace, boardCount, activeCount } of topWorkspaces) {
+      const workspaceScore = this.calculateWorkspaceHealth(workspace, orgData.boards.filter(b => b.workspace?.id === workspace.id))
       
       const workspaceNode = this.createNodeId(`ws_${workspace.id}`)
-      diagram += `    ${workspaceNode}["🏢 ${this.escapeLabel(workspace.name)}<br/>${activeCount} active • ${workspaceScore}/100"]\n`
+      diagram += `    ${workspaceNode}["🏢 ${this.escapeLabel(workspace.name)}<br/>${activeCount}/${boardCount} active • ${workspaceScore}/100"]\n`
       
       // Connect to appropriate health category
       const healthCategory = workspaceScore > 80 ? 'active' : workspaceScore > 50 ? 'inactive' : 'archived'
@@ -293,6 +312,15 @@ export class MermaidGenerator {
       
       const healthClass = this.getHealthClassByScore(workspaceScore)
       styles += `    class ${workspaceNode} ${healthClass}\n`
+    }
+
+    // Show truncation if there are more workspaces
+    if (orgData.workspaces.length > 5) {
+      const moreNode = this.createNodeId('more_workspaces_health')
+      diagram += `    ${moreNode}["... and ${orgData.workspaces.length - 5} more workspaces"]\n`
+      diagram += `    ${healthNode} --> ${moreNode}\n`
+      styles += `    classDef moreStyle fill:#f3f4f6,stroke:#d1d5db,stroke-width:1px,color:#6b7280\n`
+      styles += `    class ${moreNode} moreStyle\n`
     }
 
     // Health style definitions
@@ -308,7 +336,7 @@ export class MermaidGenerator {
   }
 
   // =============================================================================
-  // UTILITY METHODS
+  // UTILITY METHODS (unchanged from original)
   // =============================================================================
 
   private reset(): void {

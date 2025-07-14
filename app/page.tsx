@@ -84,6 +84,8 @@ export default function HomePage() {
 
   // Generate Mermaid diagram
   const generateDiagram = async () => {
+    console.log('🔄 generateDiagram called, orgData exists:', !!orgData.data)
+    
     if (!orgData.data) return
 
     setDiagramLoading(true)
@@ -91,17 +93,8 @@ export default function HomePage() {
     try {
       let requestBody: any = { type: diagramType }
       
-      if (diagramType === 'connections') {
-        if (!selectedBoard) {
-          setCurrentDiagram(null)
-          setDiagramLoading(false)
-          return
-        }
-        requestBody.boardId = selectedBoard
-      } else if (diagramType === 'organization') {
-        requestBody.options = { showInactive: false, colorByHealth: true }
-      }
-
+      console.log('📡 Making API call with body:', requestBody)
+      
       const response = await fetch('/api/diagram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,23 +102,28 @@ export default function HomePage() {
       })
       
       const result = await response.json()
+      console.log('📥 API response:', result)
       
       if (!response.ok) {
         throw new Error(result.error || 'Failed to generate diagram')
       }
+      
+      console.log('✅ Setting currentDiagram:', { 
+        title: result.title, 
+        diagramLength: result.diagram?.length || 0 
+      })
       
       setCurrentDiagram({
         diagram: result.diagram,
         title: result.title
       })
     } catch (error) {
-      console.error('Failed to generate diagram:', error)
+      console.error('❌ generateDiagram error:', error)
       setCurrentDiagram(null)
     } finally {
       setDiagramLoading(false)
     }
   }
-
   // Auto-generate diagram when data or type changes
   useEffect(() => {
     if (orgData.data) {
@@ -338,15 +336,20 @@ export default function HomePage() {
       {/* Board Selection (for connections view) */}
       {diagramType === 'connections' && orgData.data && (
         <section style={{ marginBottom: '2rem' }}>
-          <label style={{ 
-            display: 'block', 
-            marginBottom: '0.5rem', 
-            fontWeight: '500',
-            color: '#374151'
-          }}>
+          <label 
+            htmlFor="board-selector"
+            style={{ 
+              display: 'block', 
+              marginBottom: '0.5rem', 
+              fontWeight: '500',
+              color: '#374151'
+            }}
+          >
             Select board to show connections:
           </label>
           <select
+            id="board-selector"
+            name="board-selector"
             value={selectedBoard || ''}
             onChange={(e) => setSelectedBoard(e.target.value || null)}
             style={{

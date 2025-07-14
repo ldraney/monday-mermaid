@@ -1,9 +1,9 @@
 // components/MermaidDiagram.tsx
-// Interactive Mermaid diagram renderer with click handlers and zoom
+// SIMPLE, BULLETPROOF VERSION
 
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 interface MermaidDiagramProps {
   diagram: string
@@ -26,150 +26,84 @@ export default function MermaidDiagram({
   className = '',
   style = {}
 }: MermaidDiagramProps) {
-  const diagramRef = useRef<HTMLDivElement>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [status, setStatus] = useState<string>('Starting...')
+  const [svgContent, setSvgContent] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [diagramId] = useState(() => `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`)
 
   useEffect(() => {
-    if (!diagram || !diagramRef.current) return
+    let mounted = true
 
     const renderDiagram = async () => {
       try {
-        setIsLoading(true)
+        setStatus('Starting render...')
         setError(null)
+        setSvgContent('')
 
-        // Wait for Mermaid to be available
+        if (!diagram) {
+          setStatus('❌ No diagram content')
+          return
+        }
+
+        setStatus(`📊 Got diagram (${diagram.length} chars)`)
+
+        // Wait for Mermaid
         let attempts = 0
         while (!window.mermaid && attempts < 50) {
           await new Promise(resolve => setTimeout(resolve, 100))
           attempts++
+          setStatus(`Waiting for Mermaid... ${attempts}/50`)
         }
 
         if (!window.mermaid) {
           throw new Error('Mermaid library not loaded')
         }
 
-        // Clear previous diagram
-        if (diagramRef.current) {
-          diagramRef.current.innerHTML = ''
-        }
+        setStatus('✅ Mermaid loaded, initializing...')
 
-        // Configure Mermaid
+        // Initialize Mermaid
         window.mermaid.initialize({ 
           startOnLoad: false,
           theme: 'default',
           securityLevel: 'loose',
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          fontSize: 14,
-          flowchart: {
-            useMaxWidth: true,
-            htmlLabels: true,
-            curve: 'basis'
-          },
-          themeVariables: {
-            primaryColor: '#3b82f6',
-            primaryTextColor: '#ffffff',
-            primaryBorderColor: '#2563eb',
-            lineColor: '#6b7280',
-            background: '#ffffff',
-            mainBkg: '#f8fafc',
-            secondBkg: '#e2e8f0'
-          }
+          htmlLabels: false
         })
 
+        setStatus('🔄 Rendering diagram...')
+
+        // Log diagram for debugging
+        console.log('📊 Rendering diagram:', diagram.substring(0, 100) + '...')
+
         // Render the diagram
-        const { svg, bindFunctions } = await window.mermaid.render(diagramId, diagram)
+        const result = await window.mermaid.render(diagramId, diagram)
         
-        if (diagramRef.current) {
-          diagramRef.current.innerHTML = svg
-          
-          // Bind click handlers if provided
-          if (onNodeClick && bindFunctions) {
-            bindFunctions(diagramRef.current)
-          }
-
-          // Add custom click handlers to nodes
-          if (onNodeClick) {
-            const nodes = diagramRef.current.querySelectorAll('.node')
-            nodes.forEach((node, index) => {
-              node.addEventListener('click', (e) => {
-                e.preventDefault()
-                const nodeId = node.getAttribute('id') || `node-${index}`
-                onNodeClick(nodeId, { element: node })
-              })
-              
-              // Add hover effects
-              node.addEventListener('mouseenter', () => {
-                (node as HTMLElement).style.cursor = 'pointer'
-                ;(node as HTMLElement).style.opacity = '0.8'
-              })
-              
-              node.addEventListener('mouseleave', () => {
-                ;(node as HTMLElement).style.opacity = '1'
-              })
-            })
-          }
-
-          // Make diagram responsive
-          const svgElement = diagramRef.current.querySelector('svg')
-          if (svgElement) {
-            svgElement.style.maxWidth = '100%'
-            svgElement.style.height = 'auto'
-          }
+        if (mounted && result.svg) {
+          setStatus('✅ Diagram rendered successfully!')
+          setSvgContent(result.svg)
         }
 
-        setIsLoading(false)
       } catch (err) {
-        console.error('Mermaid rendering error:', err)
-        setError(err instanceof Error ? err.message : 'Failed to render diagram')
-        setIsLoading(false)
+        console.error('❌ Mermaid error:', err)
+        console.log('📊 Failed diagram:', diagram)
+        
+        const errorMsg = err instanceof Error ? err.message : 'Render failed'
+        setError(errorMsg)
+        setStatus(`❌ Error: ${errorMsg}`)
       }
     }
 
-    renderDiagram()
-  }, [diagram, diagramId, onNodeClick])
-
-  const handleZoomIn = () => {
-    const svgElement = diagramRef.current?.querySelector('svg')
-    if (svgElement) {
-      const currentScale = svgElement.style.transform.match(/scale\(([^)]+)\)/)?.[1] || '1'
-      const newScale = Math.min(parseFloat(currentScale) * 1.2, 3)
-      svgElement.style.transform = `scale(${newScale})`
+    const timer = setTimeout(renderDiagram, 100)
+    
+    return () => {
+      mounted = false
+      clearTimeout(timer)
     }
-  }
-
-  const handleZoomOut = () => {
-    const svgElement = diagramRef.current?.querySelector('svg')
-    if (svgElement) {
-      const currentScale = svgElement.style.transform.match(/scale\(([^)]+)\)/)?.[1] || '1'
-      const newScale = Math.max(parseFloat(currentScale) / 1.2, 0.3)
-      svgElement.style.transform = `scale(${newScale})`
-    }
-  }
-
-  const handleResetZoom = () => {
-    const svgElement = diagramRef.current?.querySelector('svg')
-    if (svgElement) {
-      svgElement.style.transform = 'scale(1)'
-    }
-  }
-
-  const handleFullscreen = () => {
-    if (diagramRef.current) {
-      if (document.fullscreenElement) {
-        document.exitFullscreen()
-      } else {
-        diagramRef.current.requestFullscreen()
-      }
-    }
-  }
+  }, [diagram, diagramId])
 
   return (
     <div 
       className={`mermaid-diagram-container ${className}`}
       style={{
-        position: 'relative',
         border: '1px solid #e5e7eb',
         borderRadius: '0.5rem',
         backgroundColor: '#ffffff',
@@ -187,141 +121,77 @@ export default function MermaidDiagram({
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <h3 style={{ 
-            margin: 0, 
-            fontSize: '1rem', 
-            fontWeight: '600',
-            color: '#1f2937'
-          }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>
             {title}
           </h3>
-          
-          {/* Controls */}
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              onClick={handleZoomIn}
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.75rem',
-                backgroundColor: '#f3f4f6',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.25rem',
-                cursor: 'pointer'
-              }}
-              title="Zoom In"
-            >
-              🔍+
-            </button>
-            <button
-              onClick={handleZoomOut}
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.75rem',
-                backgroundColor: '#f3f4f6',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.25rem',
-                cursor: 'pointer'
-              }}
-              title="Zoom Out"
-            >
-              🔍-
-            </button>
-            <button
-              onClick={handleResetZoom}
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.75rem',
-                backgroundColor: '#f3f4f6',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.25rem',
-                cursor: 'pointer'
-              }}
-              title="Reset Zoom"
-            >
-              ↻
-            </button>
-            <button
-              onClick={handleFullscreen}
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.75rem',
-                backgroundColor: '#f3f4f6',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.25rem',
-                cursor: 'pointer'
-              }}
-              title="Fullscreen"
-            >
-              ⛶
-            </button>
+          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+            {status}
           </div>
         </div>
       )}
 
-      {/* Diagram Content */}
+      {/* Content */}
       <div style={{
         padding: '1rem',
         minHeight: '300px',
         display: 'flex',
+        flexDirection: 'column',
         justifyContent: 'center',
-        alignItems: 'center',
-        overflow: 'auto'
+        alignItems: 'center'
       }}>
-        {isLoading && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            color: '#6b7280'
-          }}>
+        {/* Show status while loading */}
+        {!svgContent && !error && (
+          <div style={{ textAlign: 'center', color: '#6b7280' }}>
             <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔄</div>
-            <div>Rendering diagram...</div>
+            <div>{status}</div>
           </div>
         )}
 
+        {/* Show error */}
         {error && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            color: '#dc2626'
-          }}>
+          <div style={{ textAlign: 'center', color: '#dc2626' }}>
             <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>❌</div>
-            <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>
-              Diagram Error
-            </div>
-            <div style={{ fontSize: '0.875rem', textAlign: 'center' }}>
-              {error}
-            </div>
+            <div style={{ fontWeight: '600' }}>Diagram Error</div>
+            <div style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>{error}</div>
+            
+            {/* Debug info */}
+            <details style={{ marginTop: '1rem', textAlign: 'left' }}>
+              <summary style={{ cursor: 'pointer', fontSize: '0.875rem' }}>Debug Info</summary>
+              <pre style={{ 
+                fontSize: '0.75rem', 
+                backgroundColor: '#f5f5f5', 
+                padding: '0.5rem', 
+                marginTop: '0.5rem',
+                maxHeight: '200px',
+                overflow: 'auto',
+                textAlign: 'left'
+              }}>
+                {diagram.substring(0, 500)}...
+              </pre>
+            </details>
           </div>
         )}
 
-        {!isLoading && !error && (
+        {/* Show rendered diagram */}
+        {svgContent && (
           <div 
-            ref={diagramRef}
-            style={{
-              width: '100%',
-              textAlign: 'center',
-              transition: 'transform 0.2s ease-in-out'
-            }}
+            style={{ width: '100%', textAlign: 'center' }}
+            dangerouslySetInnerHTML={{ __html: svgContent }}
           />
         )}
       </div>
 
-      {/* Footer Info */}
-      {!isLoading && !error && (
-        <div style={{
-          padding: '0.5rem 1rem',
-          backgroundColor: '#f8fafc',
-          borderTop: '1px solid #e5e7eb',
-          fontSize: '0.75rem',
-          color: '#6b7280',
-          textAlign: 'center'
-        }}>
-          {onNodeClick && 'Click nodes to explore • '}
-          Use controls to zoom and navigate
-        </div>
-      )}
+      {/* Footer */}
+      <div style={{
+        padding: '0.5rem 1rem',
+        backgroundColor: '#f8fafc',
+        borderTop: '1px solid #e5e7eb',
+        fontSize: '0.75rem',
+        color: '#6b7280',
+        textAlign: 'center'
+      }}>
+        Status: {status}
+      </div>
     </div>
   )
 }
