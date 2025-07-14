@@ -44,13 +44,15 @@ export class MermaidGenerator {
     
     // Filter and limit workspaces for performance
     let workspaces = workspaceFilter 
-      ? orgData.workspaces.filter(w => workspaceFilter.includes(w.id))
+      ? orgData.workspaces.filter(w => workspaceFilter.includes(w.name))
       : orgData.workspaces
 
     // IMPORTANT: Limit workspaces to prevent diagram explosion
     if (workspaces.length > maxWorkspaces) {
       console.log(`🚨 Limiting diagram to ${maxWorkspaces} workspaces (of ${workspaces.length} total) for performance`)
       workspaces = workspaces.slice(0, maxWorkspaces)
+    } else if (workspaceFilter) {
+      console.log(`🎯 Filtering to ${workspaces.length} workspaces: ${workspaces.map(w => w.name).join(', ')}`)
     }
 
     // Add organization root if multiple workspaces

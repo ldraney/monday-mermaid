@@ -50,6 +50,13 @@ export default function HomePage() {
     title: string
   } | null>(null)
   const [diagramLoading, setDiagramLoading] = useState(false)
+  
+  // NEW: Workspace filtering
+  const [selectedWorkspaces, setSelectedWorkspaces] = useState<string[]>([])
+  const [showWorkspaceFilter, setShowWorkspaceFilter] = useState(false)
+
+  // Your priority workspaces
+  const priorityWorkspaces = ['CRM', 'Production 2025', 'Lab', 'VRM - Purchasing']
 
   // Discover organization data
   const discoverOrganization = async () => {
@@ -84,8 +91,6 @@ export default function HomePage() {
 
   // Generate Mermaid diagram
   const generateDiagram = async () => {
-    console.log('🔄 generateDiagram called, orgData exists:', !!orgData.data)
-    
     if (!orgData.data) return
 
     setDiagramLoading(true)
@@ -93,8 +98,17 @@ export default function HomePage() {
     try {
       let requestBody: any = { type: diagramType }
       
-      console.log('📡 Making API call with body:', requestBody)
-      
+      if (diagramType === 'connections') {
+        if (!selectedBoard) {
+          setCurrentDiagram(null)
+          setDiagramLoading(false)
+          return
+        }
+        requestBody.boardId = selectedBoard
+      } else if (diagramType === 'organization') {
+        requestBody.options = { showInactive: false, colorByHealth: true }
+      }
+
       const response = await fetch('/api/diagram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -102,34 +116,29 @@ export default function HomePage() {
       })
       
       const result = await response.json()
-      console.log('📥 API response:', result)
       
       if (!response.ok) {
         throw new Error(result.error || 'Failed to generate diagram')
       }
-      
-      console.log('✅ Setting currentDiagram:', { 
-        title: result.title, 
-        diagramLength: result.diagram?.length || 0 
-      })
       
       setCurrentDiagram({
         diagram: result.diagram,
         title: result.title
       })
     } catch (error) {
-      console.error('❌ generateDiagram error:', error)
+      console.error('Failed to generate diagram:', error)
       setCurrentDiagram(null)
     } finally {
       setDiagramLoading(false)
     }
   }
+
   // Auto-generate diagram when data or type changes
   useEffect(() => {
     if (orgData.data) {
       generateDiagram()
     }
-  }, [orgData.data, diagramType, selectedBoard])
+  }, [orgData.data, diagramType, selectedBoard, selectedWorkspaces])
 
   // Handle node clicks in diagrams (enables "Show Connections" interactivity)
   const handleNodeClick = async (nodeId: string) => {
@@ -262,6 +271,118 @@ export default function HomePage() {
           </button>
         </div>
       </section>
+
+      {/* Workspace Filter Section */}
+      {orgData.data && (
+        <section style={{ marginBottom: '2rem' }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '0.5rem',
+            padding: '1.5rem'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '1rem'
+            }}>
+              <h3 style={{ 
+                margin: 0, 
+                fontSize: '1.125rem', 
+                fontWeight: '600',
+                color: '#1f2937'
+              }}>
+                Workspace Filter
+              </h3>
+              <button
+                onClick={() => setShowWorkspaceFilter(!showWorkspaceFilter)}
+                style={{
+                  backgroundColor: '#f3f4f6',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '0.375rem',
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer'
+                }}
+              >
+                {showWorkspaceFilter ? 'Hide Filter' : 'Customize Filter'}
+              </button>
+            </div>
+
+            {/* Priority workspaces info */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
+                {selectedWorkspaces.length === 0 
+                  ? `Showing priority workspaces: ${priorityWorkspaces.join(', ')}`
+                  : `Showing ${selectedWorkspaces.length} selected workspaces`
+                }
+              </div>
+              {selectedWorkspaces.length > 0 && (
+                <button
+                  onClick={() => setSelectedWorkspaces([])}
+                  style={{
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '0.25rem',
+                    padding: '0.25rem 0.75rem',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Reset to Priority
+                </button>
+              )}
+            </div>
+
+            {/* Workspace selector */}
+            {showWorkspaceFilter && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gap: '0.5rem',
+                paddingTop: '1rem',
+                borderTop: '1px solid #e5e7eb'
+              }}>
+                {orgData.data.workspaces.map(workspace => (
+                  <label key={workspace.id} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem',
+                    backgroundColor: selectedWorkspaces.includes(workspace.id) ? '#eff6ff' : '#f9fafb',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedWorkspaces.includes(workspace.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedWorkspaces([...selectedWorkspaces, workspace.id])
+                        } else {
+                          setSelectedWorkspaces(selectedWorkspaces.filter(id => id !== workspace.id))
+                        }
+                      }}
+                      style={{ margin: 0 }}
+                    />
+                    <span style={{ 
+                      fontWeight: priorityWorkspaces.includes(workspace.name) ? '600' : '400',
+                      color: priorityWorkspaces.includes(workspace.name) ? '#059669' : '#374151'
+                    }}>
+                      {workspace.name}
+                      {priorityWorkspaces.includes(workspace.name) && ' ⭐'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Error Display */}
       {orgData.error && (
