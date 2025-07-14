@@ -104,6 +104,53 @@ export const config = {
     // Sync settings
     autoSyncIntervalHours: 6,
     enableIncrementalSync: true,
+  },
+
+  // 🎯 PRIORITY WORKSPACES - Define your focused workspaces here
+  priorityWorkspaces: {
+    // Define your 4 priority workspaces by name
+    // The app will ONLY sync and show these workspaces
+    workspaceNames: [
+      'CRM',
+      'Production 2025', 
+      'Lab',
+      'VRM - Purchasing'
+    ],
+    
+    // Display configuration for priority workspaces
+    displaySettings: {
+      // Show board health indicators
+      showHealthIndicators: true,
+      
+      // Show item counts on boards
+      showItemCounts: true,
+      
+      // Show last activity dates
+      showLastActivity: true,
+      
+      // Maximum boards to show per workspace (for performance)
+      maxBoardsPerWorkspace: 12,
+      
+      // Color coding for board health
+      healthColors: {
+        healthy: '#10b981',    // Green
+        warning: '#f59e0b',    // Amber  
+        inactive: '#ef4444',   // Red
+        abandoned: '#6b7280'   // Gray
+      }
+    },
+    
+    // Board filtering within priority workspaces
+    boardFilters: {
+      // Only show active boards by default
+      includeArchived: false,
+      
+      // Minimum items to show a board (hide empty boards)
+      minItemsToShow: 0,
+      
+      // Board types to exclude
+      excludeBoardTypes: ['template']
+    }
   }
 } as const
 
@@ -111,6 +158,7 @@ export const config = {
 export type AppConfig = typeof config
 export type MondayConfig = typeof config.monday
 export type DatabaseConfig = typeof config.database
+export type PriorityWorkspacesConfig = typeof config.priorityWorkspaces
 
 // Helper functions
 export function isDevelopment(): boolean {
@@ -119,6 +167,14 @@ export function isDevelopment(): boolean {
 
 export function isProduction(): boolean {
   return config.app.isProduction
+}
+
+export function getPriorityWorkspaceNames(): string[] {
+  return config.priorityWorkspaces.workspaceNames
+}
+
+export function isPriorityWorkspace(workspaceName: string): boolean {
+  return config.priorityWorkspaces.workspaceNames.includes(workspaceName)
 }
 
 // Validation helpers
@@ -137,7 +193,8 @@ export function logConfig(): void {
     console.log(`  Environment: ${config.app.environment}`)
     console.log(`  Monday API: ${config.monday.apiKey.slice(0, 10)}...`)
     console.log(`  Database: ${config.database.url.split('@')[1] || 'local'}`)
-    console.log(`  Test Workspace: ${config.monday.testWorkspaceId || 'all'}`)
-    console.log(`  Test Board: ${config.monday.testBoardId || 'all'}`)
+    console.log(`  Priority Workspaces: ${config.priorityWorkspaces.workspaceNames.join(', ')}`)
+    console.log(`  Health Indicators: ${config.priorityWorkspaces.displaySettings.showHealthIndicators}`)
+    console.log(`  Max Boards/Workspace: ${config.priorityWorkspaces.displaySettings.maxBoardsPerWorkspace}`)
   }
 }

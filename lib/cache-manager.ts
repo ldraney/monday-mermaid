@@ -1,5 +1,5 @@
 // lib/cache-manager.ts
-// Data synchronization and cache management between Monday.com and PostgreSQL
+// FOCUSED data synchronization for priority workspaces only
 
 import { mondayApi } from './monday-api'
 import { 
@@ -14,7 +14,7 @@ import {
   failSync,
   testDatabaseConnection
 } from './database'
-import { config } from './config'
+import { config, getPriorityWorkspaceNames } from './config'
 import type { 
   OrganizationalStructure, 
   MondayBoard, 
@@ -26,20 +26,23 @@ export class CacheManager {
   private issyncing = false
 
   // =============================================================================
-  // MAIN SYNC OPERATIONS
+  // PRIORITY WORKSPACE FOCUSED SYNC OPERATIONS
   // =============================================================================
 
-  async fullSync(options: SyncOptions = {}): Promise<OrganizationalStructure> {
+  async priorityWorkspaceSync(options: SyncOptions = {}): Promise<OrganizationalStructure> {
     if (this.issyncing) {
       throw new Error('Sync already in progress')
     }
 
     this.issyncing = true
-    const syncId = await startSync('full_sync')
+    const syncId = await startSync('priority_workspace_sync')
     
     try {
-      console.log('🔄 Starting full organizational sync...')
+      console.log('🎯 Starting FOCUSED priority workspace sync...')
       const startTime = Date.now()
+      const priorityNames = getPriorityWorkspaceNames()
+
+      console.log(`🔍 Targeting workspaces: ${priorityNames.join(', ')}`)
 
       // Verify connections
       const [mondayConnected, dbConnected] = await Promise.all([
@@ -50,16 +53,23 @@ export class CacheManager {
       if (!mondayConnected) throw new Error('Monday.com API connection failed')
       if (!dbConnected) throw new Error('Database connection failed')
 
-      // Discover organizational structure from Monday.com
+      // Use focused discovery for priority workspaces only
       const discoveryOptions: DiscoveryOptions = {
         includeArchived: options.includeArchived ?? false,
         includeItems: true,
-        maxBoards: config.app.isDevelopment ? 50 : undefined, // Limit in development
+        maxBoards: config.priorityWorkspaces.displaySettings.maxBoardsPerWorkspace,
       }
 
-      const orgData = await mondayApi.discoverOrganization(discoveryOptions)
+      console.log('📊 Discovering priority workspace organization...')
+      const orgData = await mondayApi.discoverPriorityWorkspaces(discoveryOptions)
       
-      // Cache workspaces
+      if (orgData.workspaces.length === 0) {
+        throw new Error(`No priority workspaces found. Expected: ${priorityNames.join(', ')}`)
+      }
+
+      console.log(`✅ Found ${orgData.workspaces.length}/${priorityNames.length} priority workspaces`)
+      
+      // Cache workspaces (only priority ones)
       await saveWorkspaces(orgData.workspaces)
       
       // Cache boards and their columns
@@ -69,16 +79,16 @@ export class CacheManager {
         await saveColumns(board.id, board.columns)
         boardsProcessed++
         
-        if (boardsProcessed % 10 === 0) {
-          console.log(`📋 Processed ${boardsProcessed}/${orgData.boards.length} boards`)
+        if (boardsProcessed % 5 === 0) {
+          console.log(`📋 Processed ${boardsProcessed}/${orgData.boards.length} priority workspace boards`)
         }
       }
 
       // Cache users
       await saveUsers(orgData.users)
 
-      // Discover and cache board relationships
-      await this.syncBoardRelationships(orgData.boards)
+      // Discover and cache board relationships WITHIN priority workspaces
+      await this.syncPriorityBoardRelationships(orgData.boards)
 
       // Complete sync tracking
       await completeSync(syncId, {
@@ -89,19 +99,25 @@ export class CacheManager {
       })
 
       const duration = Date.now() - startTime
-      console.log(`✅ Full sync completed in ${duration}ms`)
-      console.log(`   Cached: ${orgData.workspaces.length} workspaces, ${orgData.boards.length} boards, ${orgData.users.length} users`)
+      console.log(`✅ Priority workspace sync completed in ${duration}ms`)
+      console.log(`📊 Cached: ${orgData.workspaces.length} workspaces, ${orgData.boards.length} boards, ${orgData.users.length} users`)
 
-      // Return the cached organizational structure
+      // Return the focused organizational structure
       return await getOrganizationalStructure()
       
     } catch (error) {
       await failSync(syncId, error instanceof Error ? error.message : 'Unknown error')
-      console.error('❌ Full sync failed:', error)
+      console.error('❌ Priority workspace sync failed:', error)
       throw error
     } finally {
       this.issyncing = false
     }
+  }
+
+  // For backward compatibility, map full sync to priority sync
+  async fullSync(options: SyncOptions = {}): Promise<OrganizationalStructure> {
+    console.log('🔄 Full sync requested - using focused priority workspace sync instead')
+    return this.priorityWorkspaceSync({ ...options, forceRefresh: true })
   }
 
   async incrementalSync(options: SyncOptions = {}): Promise<OrganizationalStructure> {
@@ -110,44 +126,51 @@ export class CacheManager {
     }
 
     this.issyncing = true
-    const syncId = await startSync('incremental_sync')
+    const syncId = await startSync('incremental_priority_sync')
 
     try {
-      console.log('⚡ Starting incremental sync...')
+      console.log('⚡ Starting incremental priority workspace sync...')
       const startTime = Date.now()
 
-      // For now, incremental sync is simplified - just update boards
-      // In a full implementation, this would check timestamps and only update changed data
+      // Get current priority workspaces from Monday.com
+      const priorityWorkspaces = await mondayApi.getPriorityWorkspaces()
       
-      const orgData = await mondayApi.discoverOrganization({
-        includeArchived: false,
-        maxBoards: 100, // Reasonable limit for incremental updates
-      })
+      if (priorityWorkspaces.length === 0) {
+        throw new Error('No priority workspaces found for incremental sync')
+      }
 
-      // Update only active boards (simplified incremental logic)
-      const activeBoards = orgData.boards.filter(board => board.state === 'active')
+      // Update only active boards from priority workspaces
+      const updatedBoards: MondayBoard[] = []
       
-      for (const board of activeBoards) {
-        await saveBoards([board])
-        await saveColumns(board.id, board.columns)
+      for (const workspace of priorityWorkspaces) {
+        const workspaceBoards = await mondayApi.getBoardsInWorkspace(workspace.id, {
+          includeArchived: false,
+          maxBoards: config.priorityWorkspaces.displaySettings.maxBoardsPerWorkspace,
+        })
+        
+        for (const board of workspaceBoards.filter(b => b.state === 'active')) {
+          await saveBoards([board])
+          await saveColumns(board.id, board.columns)
+          updatedBoards.push(board)
+        }
       }
 
       await completeSync(syncId, {
-        processed: activeBoards.length,
+        processed: updatedBoards.length,
         created: 0,
-        updated: activeBoards.length,
+        updated: updatedBoards.length,
         deleted: 0,
       })
 
       const duration = Date.now() - startTime
-      console.log(`⚡ Incremental sync completed in ${duration}ms`)
-      console.log(`   Updated: ${activeBoards.length} active boards`)
+      console.log(`⚡ Incremental priority sync completed in ${duration}ms`)
+      console.log(`📊 Updated: ${updatedBoards.length} active boards`)
 
       return await getOrganizationalStructure()
 
     } catch (error) {
       await failSync(syncId, error instanceof Error ? error.message : 'Unknown error')
-      console.error('❌ Incremental sync failed:', error)
+      console.error('❌ Incremental priority sync failed:', error)
       throw error
     } finally {
       this.issyncing = false
@@ -155,11 +178,11 @@ export class CacheManager {
   }
 
   // =============================================================================
-  // RELATIONSHIP DISCOVERY
+  // PRIORITY WORKSPACE RELATIONSHIP DISCOVERY
   // =============================================================================
 
-  private async syncBoardRelationships(boards: MondayBoard[]): Promise<void> {
-    console.log('🕸️ Discovering board relationships...')
+  private async syncPriorityBoardRelationships(boards: MondayBoard[]): Promise<void> {
+    console.log('🕸️ Discovering relationships within priority workspaces...')
     let relationshipsFound = 0
 
     for (const board of boards) {
@@ -168,32 +191,153 @@ export class CacheManager {
         const connections = await mondayApi.getBoardConnections(board.id)
         
         for (const connection of connections) {
-          if (connection.targetBoards && Array.isArray(connection.targetBoards)) {
-            for (const targetBoardId of connection.targetBoards) {
-              await saveBoardRelationship({
-                sourceBoard: board.id,
-                targetBoard: targetBoardId,
-                type: connection.type || 'connect',
-                sourceColumn: connection.columnId,
-                metadata: {
-                  columnTitle: connection.columnTitle,
-                  discoveredAt: new Date().toISOString(),
-                },
-              })
-              relationshipsFound++
-            }
+          // Only save relationships that target boards we actually have (priority workspace boards)
+          const targetBoardExists = boards.some(b => b.id === connection.targetBoard)
+          
+          if (targetBoardExists) {
+            await saveBoardRelationship({
+              sourceBoard: board.id,
+              targetBoard: connection.targetBoard,
+              type: connection.type || 'connect',
+              sourceColumn: connection.columnId,
+              metadata: {
+                columnTitle: connection.columnTitle,
+                connectionDetails: connection.connectionDetails,
+                discoveredAt: new Date().toISOString(),
+              },
+            })
+            relationshipsFound++
+            
+            console.log(`🔗 Found connection: ${board.name} → ${connection.targetBoard} (${connection.type})`)
+          } else {
+            console.log(`⚠️ Skipping external connection from ${board.name} to board ${connection.targetBoard} (outside priority workspaces)`)
           }
         }
       } catch (error) {
-        console.warn(`⚠️ Failed to get relationships for board ${board.id}:`, error)
+        console.warn(`⚠️ Failed to get relationships for board ${board.name}:`, error)
       }
     }
 
-    console.log(`🕸️ Found ${relationshipsFound} board relationships`)
+    console.log(`🕸️ Found ${relationshipsFound} relationships within priority workspaces`)
   }
 
   // =============================================================================
-  // CACHE STATUS AND MANAGEMENT
+  // PRIORITY WORKSPACE SPECIFIC METHODS
+  // =============================================================================
+
+  async syncSpecificPriorityWorkspace(workspaceName: string): Promise<void> {
+    const priorityNames = getPriorityWorkspaceNames()
+    
+    if (!priorityNames.includes(workspaceName)) {
+      throw new Error(`"${workspaceName}" is not a priority workspace. Priority workspaces: ${priorityNames.join(', ')}`)
+    }
+
+    if (this.issyncing) {
+      throw new Error('Sync already in progress')
+    }
+
+    const syncId = await startSync('specific_priority_workspace_sync', workspaceName)
+    
+    try {
+      console.log(`🎯 Syncing specific priority workspace: ${workspaceName}`)
+      
+      // Find the workspace by name
+      const allWorkspaces = await mondayApi.getWorkspaces()
+      const targetWorkspace = allWorkspaces.find(w => w.name === workspaceName)
+      
+      if (!targetWorkspace) {
+        throw new Error(`Priority workspace "${workspaceName}" not found in Monday.com`)
+      }
+
+      // Get boards for specific workspace
+      const boards = await mondayApi.getBoardsInWorkspace(targetWorkspace.id, {
+        includeArchived: config.priorityWorkspaces.boardFilters.includeArchived,
+        maxBoards: config.priorityWorkspaces.displaySettings.maxBoardsPerWorkspace,
+      })
+      
+      // Save workspace and boards
+      await saveWorkspaces([targetWorkspace])
+      
+      for (const board of boards) {
+        await saveBoards([board])
+        await saveColumns(board.id, board.columns)
+      }
+
+      await completeSync(syncId, {
+        processed: boards.length + 1,
+        created: 0,
+        updated: boards.length + 1,
+        deleted: 0,
+      })
+
+      console.log(`✅ Priority workspace "${workspaceName}" synced: ${boards.length} boards`)
+      
+    } catch (error) {
+      await failSync(syncId, error instanceof Error ? error.message : 'Unknown error')
+      throw error
+    }
+  }
+
+  async validatePriorityWorkspaceSetup(): Promise<{
+    isValid: boolean
+    foundWorkspaces: string[]
+    missingWorkspaces: string[]
+    issues: string[]
+    recommendations: string[]
+  }> {
+    try {
+      const validation = await mondayApi.validatePriorityWorkspaceSetup()
+      const priorityNames = getPriorityWorkspaceNames()
+      
+      const allWorkspaces = await mondayApi.getWorkspaces()
+      const foundWorkspaces = allWorkspaces
+        .filter(w => priorityNames.includes(w.name))
+        .map(w => w.name)
+      
+      const missingWorkspaces = priorityNames.filter(name => !foundWorkspaces.includes(name))
+      
+      return {
+        isValid: validation.isValid && missingWorkspaces.length === 0,
+        foundWorkspaces,
+        missingWorkspaces,
+        issues: validation.issues,
+        recommendations: validation.recommendations
+      }
+    } catch (error) {
+      return {
+        isValid: false,
+        foundWorkspaces: [],
+        missingWorkspaces: getPriorityWorkspaceNames(),
+        issues: [`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
+        recommendations: ['Check Monday.com API connectivity and workspace access']
+      }
+    }
+  }
+
+  // =============================================================================
+  // SMART SYNC STRATEGY (priority workspace focused)
+  // =============================================================================
+
+  async smartSync(): Promise<OrganizationalStructure> {
+    const status = await this.getCacheStatus()
+    
+    if (!status.isHealthy || status.cacheAge > 48) {
+      // Priority sync if cache is unhealthy or very old
+      console.log('🎯 Performing priority workspace sync (cache unhealthy or very old)')
+      return await this.priorityWorkspaceSync()
+    } else if (status.needsRefresh) {
+      // Incremental sync if cache needs refresh
+      console.log('⚡ Performing incremental priority sync (cache needs refresh)')
+      return await this.incrementalSync()
+    } else {
+      // Return cached data if fresh
+      console.log('✅ Using cached priority workspace data (fresh)')
+      return await getOrganizationalStructure()
+    }
+  }
+
+  // =============================================================================
+  // CACHE STATUS AND MANAGEMENT (unchanged)
   // =============================================================================
 
   async getCacheStatus(): Promise<{
@@ -233,67 +377,11 @@ export class CacheManager {
     const status = await this.getCacheStatus()
     
     if (status.needsRefresh) {
-      console.log(`🔄 Cache is ${status.cacheAge.toFixed(1)} hours old, refreshing...`)
+      console.log(`🔄 Cache is ${status.cacheAge.toFixed(1)} hours old, refreshing priority workspaces...`)
       return await this.incrementalSync()
     } else {
-      console.log(`✅ Cache is fresh (${status.cacheAge.toFixed(1)} hours old)`)
+      console.log(`✅ Priority workspace cache is fresh (${status.cacheAge.toFixed(1)} hours old)`)
       return null
-    }
-  }
-
-  // =============================================================================
-  // SYNC STRATEGIES
-  // =============================================================================
-
-  async smartSync(): Promise<OrganizationalStructure> {
-    const status = await this.getCacheStatus()
-    
-    if (!status.isHealthy || status.cacheAge > 48) {
-      // Full sync if cache is unhealthy or very old
-      console.log('🔄 Performing full sync (cache unhealthy or very old)')
-      return await this.fullSync()
-    } else if (status.needsRefresh) {
-      // Incremental sync if cache needs refresh
-      console.log('⚡ Performing incremental sync (cache needs refresh)')
-      return await this.incrementalSync()
-    } else {
-      // Return cached data if fresh
-      console.log('✅ Using cached data (fresh)')
-      return await getOrganizationalStructure()
-    }
-  }
-
-  async syncSpecificWorkspace(workspaceId: string): Promise<void> {
-    if (this.issyncing) {
-      throw new Error('Sync already in progress')
-    }
-
-    const syncId = await startSync('workspace_sync', workspaceId)
-    
-    try {
-      console.log(`🔄 Syncing workspace ${workspaceId}...`)
-      
-      // Get boards for specific workspace
-      const boards = await mondayApi.getBoardsInWorkspace(workspaceId)
-      
-      // Save boards and columns
-      for (const board of boards) {
-        await saveBoards([board])
-        await saveColumns(board.id, board.columns)
-      }
-
-      await completeSync(syncId, {
-        processed: boards.length,
-        created: 0,
-        updated: boards.length,
-        deleted: 0,
-      })
-
-      console.log(`✅ Workspace ${workspaceId} synced: ${boards.length} boards`)
-      
-    } catch (error) {
-      await failSync(syncId, error instanceof Error ? error.message : 'Unknown error')
-      throw error
     }
   }
 
@@ -313,19 +401,22 @@ export class CacheManager {
     
     try {
       const orgData = await getOrganizationalStructure()
+      const priorityNames = getPriorityWorkspaceNames()
       
+      // Check if we have all priority workspaces
+      const foundWorkspaceNames = orgData.workspaces.map(w => w.name)
+      const missingPriorityWorkspaces = priorityNames.filter(name => 
+        !foundWorkspaceNames.includes(name)
+      )
+      
+      if (missingPriorityWorkspaces.length > 0) {
+        issues.push(`Missing priority workspaces: ${missingPriorityWorkspaces.join(', ')}`)
+      }
+
       // Check for orphaned boards (boards without workspaces)
       const orphanedBoards = orgData.boards.filter(board => !board.workspace)
       if (orphanedBoards.length > 0) {
         issues.push(`${orphanedBoards.length} boards without workspace references`)
-      }
-
-      // Check for empty workspaces
-      const emptyWorkspaces = orgData.workspaces.filter(workspace => 
-        !orgData.boards.some(board => board.workspace?.id === workspace.id)
-      )
-      if (emptyWorkspaces.length > 0) {
-        issues.push(`${emptyWorkspaces.length} workspaces with no boards`)
       }
 
       // Check cache age
@@ -348,10 +439,23 @@ export class CacheManager {
   }
 
   async clearCache(): Promise<void> {
-    console.log('🗑️ Clearing cache (this will require a full resync)...')
-    // This would delete all cached data - implement with caution!
+    console.log('🗑️ Clearing priority workspace cache...')
+    // This would delete cached data for priority workspaces
     // For now, just log the intention
     console.log('Cache clear not implemented (safety measure)')
+  }
+
+  // Legacy method mapping
+  async syncSpecificWorkspace(workspaceId: string): Promise<void> {
+    // Convert workspace ID to name and use priority workspace sync
+    const orgData = await getOrganizationalStructure()
+    const workspace = orgData.workspaces.find(w => w.id === workspaceId)
+    
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`)
+    }
+    
+    return this.syncSpecificPriorityWorkspace(workspace.name)
   }
 }
 
@@ -362,7 +466,7 @@ export class CacheManager {
 export const cacheManager = new CacheManager()
 
 // =============================================================================
-// CONVENIENCE FUNCTIONS
+// CONVENIENCE FUNCTIONS (updated for priority workspace focus)
 // =============================================================================
 
 export async function ensureFreshData(): Promise<OrganizationalStructure> {
@@ -373,12 +477,16 @@ export async function quickSync(): Promise<OrganizationalStructure> {
   const status = await cacheManager.getCacheStatus()
   
   if (!status.isHealthy) {
-    return await cacheManager.fullSync()
+    return await cacheManager.priorityWorkspaceSync()
   } else {
     return await getOrganizationalStructure()
   }
 }
 
 export async function forceRefresh(): Promise<OrganizationalStructure> {
-  return await cacheManager.fullSync({ forceRefresh: true })
+  return await cacheManager.priorityWorkspaceSync({ forceRefresh: true })
+}
+
+export async function validatePriorityWorkspaces() {
+  return await cacheManager.validatePriorityWorkspaceSetup()
 }

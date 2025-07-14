@@ -1,5 +1,5 @@
 // app/page.tsx
-// Main dashboard for Monday.com organizational visualization
+// Focused dashboard for Monday.com priority workspace visualization
 
 'use client'
 
@@ -37,6 +37,86 @@ function StatCard({ title, value, icon, description }: {
   )
 }
 
+// Priority Workspace Info Component
+function PriorityWorkspaceInfo({ orgData }: { orgData: OrganizationalStructure | null }) {
+  if (!orgData) return null
+
+  const priorityWorkspaceNames = ['CRM', 'Production 2025', 'Lab', 'VRM - Purchasing']
+  const priorityWorkspaces = orgData.workspaces.filter(w => 
+    priorityWorkspaceNames.includes(w.name)
+  )
+
+  return (
+    <div style={{
+      backgroundColor: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '0.5rem',
+      padding: '1.5rem',
+      marginBottom: '2rem'
+    }}>
+      <h3 style={{ 
+        margin: '0 0 1rem 0', 
+        fontSize: '1.125rem', 
+        fontWeight: '600',
+        color: '#1f2937'
+      }}>
+        🎯 Priority Workspaces
+      </h3>
+      
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '1rem'
+      }}>
+        {priorityWorkspaces.map(workspace => {
+          const workspaceBoards = orgData.boards.filter(board => 
+            board.workspace?.id === workspace.id && board.state === 'active'
+          )
+          const totalItems = workspaceBoards.reduce((sum, board) => 
+            sum + (board.items_count || 0), 0
+          )
+          
+          return (
+            <div 
+              key={workspace.id}
+              style={{
+                backgroundColor: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: '0.375rem',
+                padding: '1rem',
+              }}
+            >
+              <div style={{ fontWeight: '600', marginBottom: '0.5rem', color: '#1e293b' }}>
+                🏢 {workspace.name}
+              </div>
+              <div style={{ fontSize: '0.875rem', color: '#64748b' }}>
+                {workspaceBoards.length} active boards
+              </div>
+              <div style={{ fontSize: '0.875rem', color: '#64748b' }}>
+                {totalItems.toLocaleString()} total items
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      
+      {priorityWorkspaces.length < priorityWorkspaceNames.length && (
+        <div style={{
+          marginTop: '1rem',
+          padding: '0.75rem',
+          backgroundColor: '#fef3c7',
+          border: '1px solid #fcd34d',
+          borderRadius: '0.375rem',
+          fontSize: '0.875rem',
+          color: '#92400e'
+        }}>
+          ⚠️ Some priority workspaces not found. Check workspace names in your Monday.com account.
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function HomePage() {
   const [orgData, setOrgData] = useState<ApiState<OrganizationalStructure>>({
     data: null,
@@ -50,15 +130,8 @@ export default function HomePage() {
     title: string
   } | null>(null)
   const [diagramLoading, setDiagramLoading] = useState(false)
-  
-  // NEW: Workspace filtering
-  const [selectedWorkspaces, setSelectedWorkspaces] = useState<string[]>([])
-  const [showWorkspaceFilter, setShowWorkspaceFilter] = useState(false)
 
-  // Your priority workspaces
-  const priorityWorkspaces = ['CRM', 'Production 2025', 'Lab', 'VRM - Purchasing']
-
-  // Discover organization data
+  // Discover priority workspaces only
   const discoverOrganization = async () => {
     setOrgData(prev => ({ ...prev, status: 'loading', error: null }))
     
@@ -138,14 +211,12 @@ export default function HomePage() {
     if (orgData.data) {
       generateDiagram()
     }
-  }, [orgData.data, diagramType, selectedBoard, selectedWorkspaces])
+  }, [orgData.data, diagramType, selectedBoard])
 
   // Handle node clicks in diagrams (enables "Show Connections" interactivity)
   const handleNodeClick = async (nodeId: string) => {
     if (!orgData.data) return
     
-    // Extract board ID from mermaid node ID (format is usually n0, n1, etc.)
-    // We need to find the actual board ID from the node click
     console.log('Node clicked:', nodeId)
     
     // For now, if we're not in connections mode, switch to it
@@ -178,15 +249,15 @@ export default function HomePage() {
           marginBottom: '1rem',
           color: '#1e293b'
         }}>
-          Monday.com Organization Intelligence
+          Priority Workspace Intelligence
         </h1>
         <p style={{ 
           fontSize: '1.125rem', 
           color: '#64748b',
           marginBottom: '2rem'
         }}>
-          Visualize your Monday.com organizational structure with interactive Mermaid diagrams, 
-          health analytics, and intelligent insights.
+          Focused visualization and analytics for your core Monday.com workspaces:
+          <strong> CRM, Production 2025, Lab, and VRM - Purchasing</strong>
         </p>
 
         {/* Action Buttons */}
@@ -210,9 +281,28 @@ export default function HomePage() {
             disabled={orgData.status === 'loading'}
             onClick={discoverOrganization}
           >
-            {orgData.status === 'loading' ? '🔄 Discovering...' : '🔍 Discover Organization'}
+            {orgData.status === 'loading' ? '🔄 Syncing...' : '🎯 Sync Priority Workspaces'}
           </button>
           
+          <button
+            style={{
+              backgroundColor: diagramType === 'organization' ? '#7c3aed' : '#8b5cf6',
+              color: 'white',
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderRadius: '0.5rem',
+              fontSize: '1rem',
+              fontWeight: '500',
+              cursor: orgData.data ? 'pointer' : 'not-allowed',
+              transition: 'background-color 0.2s',
+              opacity: orgData.data ? 1 : 0.5
+            }}
+            disabled={!orgData.data}
+            onClick={() => setDiagramType('organization')}
+          >
+            📊 Workspace Overview
+          </button>
+
           <button
             style={{
               backgroundColor: diagramType === 'connections' ? '#059669' : '#10b981',
@@ -229,7 +319,7 @@ export default function HomePage() {
             disabled={!orgData.data}
             onClick={() => setDiagramType('connections')}
           >
-            🕸️ Show Connections
+            🕸️ Board Connections
           </button>
 
           <button
@@ -248,141 +338,13 @@ export default function HomePage() {
             disabled={!orgData.data}
             onClick={() => setDiagramType('health')}
           >
-            🏥 Health Check
-          </button>
-
-          <button
-            style={{
-              backgroundColor: diagramType === 'organization' ? '#7c3aed' : '#8b5cf6',
-              color: 'white',
-              padding: '0.75rem 1.5rem',
-              border: 'none',
-              borderRadius: '0.5rem',
-              fontSize: '1rem',
-              fontWeight: '500',
-              cursor: orgData.data ? 'pointer' : 'not-allowed',
-              transition: 'background-color 0.2s',
-              opacity: orgData.data ? 1 : 0.5
-            }}
-            disabled={!orgData.data}
-            onClick={() => setDiagramType('organization')}
-          >
-            📊 Organization Chart
+            🏥 Health Analysis
           </button>
         </div>
       </section>
 
-      {/* Workspace Filter Section */}
-      {orgData.data && (
-        <section style={{ marginBottom: '2rem' }}>
-          <div style={{
-            backgroundColor: '#ffffff',
-            border: '1px solid #e5e7eb',
-            borderRadius: '0.5rem',
-            padding: '1.5rem'
-          }}>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              marginBottom: '1rem'
-            }}>
-              <h3 style={{ 
-                margin: 0, 
-                fontSize: '1.125rem', 
-                fontWeight: '600',
-                color: '#1f2937'
-              }}>
-                Workspace Filter
-              </h3>
-              <button
-                onClick={() => setShowWorkspaceFilter(!showWorkspaceFilter)}
-                style={{
-                  backgroundColor: '#f3f4f6',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '0.375rem',
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer'
-                }}
-              >
-                {showWorkspaceFilter ? 'Hide Filter' : 'Customize Filter'}
-              </button>
-            </div>
-
-            {/* Priority workspaces info */}
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                {selectedWorkspaces.length === 0 
-                  ? `Showing priority workspaces: ${priorityWorkspaces.join(', ')}`
-                  : `Showing ${selectedWorkspaces.length} selected workspaces`
-                }
-              </div>
-              {selectedWorkspaces.length > 0 && (
-                <button
-                  onClick={() => setSelectedWorkspaces([])}
-                  style={{
-                    backgroundColor: '#ef4444',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '0.25rem',
-                    padding: '0.25rem 0.75rem',
-                    fontSize: '0.75rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Reset to Priority
-                </button>
-              )}
-            </div>
-
-            {/* Workspace selector */}
-            {showWorkspaceFilter && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                gap: '0.5rem',
-                paddingTop: '1rem',
-                borderTop: '1px solid #e5e7eb'
-              }}>
-                {orgData.data.workspaces.map(workspace => (
-                  <label key={workspace.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    padding: '0.5rem',
-                    backgroundColor: selectedWorkspaces.includes(workspace.id) ? '#eff6ff' : '#f9fafb',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem'
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedWorkspaces.includes(workspace.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedWorkspaces([...selectedWorkspaces, workspace.id])
-                        } else {
-                          setSelectedWorkspaces(selectedWorkspaces.filter(id => id !== workspace.id))
-                        }
-                      }}
-                      style={{ margin: 0 }}
-                    />
-                    <span style={{ 
-                      fontWeight: priorityWorkspaces.includes(workspace.name) ? '600' : '400',
-                      color: priorityWorkspaces.includes(workspace.name) ? '#059669' : '#374151'
-                    }}>
-                      {workspace.name}
-                      {priorityWorkspaces.includes(workspace.name) && ' ⭐'}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+      {/* Priority Workspace Info */}
+      <PriorityWorkspaceInfo orgData={orgData.data} />
 
       {/* Error Display */}
       {orgData.error && (
@@ -396,7 +358,7 @@ export default function HomePage() {
           }}>
             <strong>Error:</strong> {orgData.error}
             <div style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
-              Make sure your MONDAY_API_KEY is set correctly in your environment variables.
+              Make sure your MONDAY_API_KEY is set correctly and that your priority workspace names match exactly.
             </div>
           </div>
         </section>
@@ -410,7 +372,7 @@ export default function HomePage() {
           marginBottom: '1.5rem',
           color: '#1e293b'
         }}>
-          Organization Overview
+          Priority Workspace Metrics
         </h2>
         
         <div style={{
@@ -419,28 +381,28 @@ export default function HomePage() {
           gap: '1.5rem'
         }}>
           <StatCard 
-            title="Workspaces" 
+            title="Priority Workspaces" 
             value={stats.workspaces}
-            icon="🏢"
-            description="Total workspaces"
-          />
-          <StatCard 
-            title="Boards" 
-            value={stats.boards}
-            icon="📋"
-            description="Total boards"
+            icon="🎯"
+            description="Core workspaces"
           />
           <StatCard 
             title="Active Boards" 
             value={stats.activeBoards}
-            icon="✅"
-            description="Currently active"
+            icon="📋"
+            description="In priority workspaces"
           />
           <StatCard 
             title="Total Items" 
             value={stats.totalItems}
             icon="📝"
             description="Across all boards"
+          />
+          <StatCard 
+            title="Health Score" 
+            value={orgData.data ? Math.round((stats.activeBoards / stats.boards) * 100) : 0}
+            icon="💪"
+            description="% active boards"
           />
         </div>
         
@@ -450,47 +412,55 @@ export default function HomePage() {
           fontSize: '0.875rem', 
           color: '#64748b' 
         }}>
-          Last scanned: {stats.lastScan}
+          Last synced: {stats.lastScan}
         </div>
       </section>
 
       {/* Board Selection (for connections view) */}
       {diagramType === 'connections' && orgData.data && (
         <section style={{ marginBottom: '2rem' }}>
-          <label 
-            htmlFor="board-selector"
-            style={{ 
-              display: 'block', 
-              marginBottom: '0.5rem', 
-              fontWeight: '500',
-              color: '#374151'
-            }}
-          >
-            Select board to show connections:
-          </label>
-          <select
-            id="board-selector"
-            name="board-selector"
-            value={selectedBoard || ''}
-            onChange={(e) => setSelectedBoard(e.target.value || null)}
-            style={{
-              width: '100%',
-              maxWidth: '400px',
-              padding: '0.5rem',
-              border: '1px solid #d1d5db',
-              borderRadius: '0.375rem',
-              fontSize: '0.875rem'
-            }}
-          >
-            <option value="">Choose a board...</option>
-            {orgData.data.boards
-              .filter(board => board.state === 'active')
-              .map(board => (
-                <option key={board.id} value={board.id}>
-                  {board.name} ({board.workspace?.name})
-                </option>
-              ))}
-          </select>
+          <div style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '0.5rem',
+            padding: '1.5rem'
+          }}>
+            <label 
+              htmlFor="board-selector"
+              style={{ 
+                display: 'block', 
+                marginBottom: '0.5rem', 
+                fontWeight: '500',
+                color: '#374151'
+              }}
+            >
+              Select a board to explore its connections:
+            </label>
+            <select
+              id="board-selector"
+              name="board-selector"
+              value={selectedBoard || ''}
+              onChange={(e) => setSelectedBoard(e.target.value || null)}
+              style={{
+                width: '100%',
+                maxWidth: '500px',
+                padding: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                fontSize: '0.875rem',
+                backgroundColor: '#ffffff'
+              }}
+            >
+              <option value="">Choose a board from your priority workspaces...</option>
+              {orgData.data.boards
+                .filter(board => board.state === 'active')
+                .map(board => (
+                  <option key={board.id} value={board.id}>
+                    {board.name} ({board.workspace?.name}) - {board.items_count || 0} items
+                  </option>
+                ))}
+            </select>
+          </div>
         </section>
       )}
 
@@ -502,9 +472,9 @@ export default function HomePage() {
           marginBottom: '1.5rem',
           color: '#1e293b'
         }}>
-          {diagramType === 'organization' && 'Organization Structure'}
-          {diagramType === 'connections' && 'Board Connections'}
-          {diagramType === 'health' && 'Health Dashboard'}
+          {diagramType === 'organization' && 'Priority Workspace Structure'}
+          {diagramType === 'connections' && 'Board Connection Analysis'}
+          {diagramType === 'health' && 'Workspace Health Dashboard'}
         </h2>
         
         {/* Diagram States */}
@@ -523,11 +493,11 @@ export default function HomePage() {
           }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎯</div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-              Ready for Monday.com Integration
+              Ready for Focused Monday.com Analysis
             </h3>
             <p style={{ color: '#64748b', textAlign: 'center', maxWidth: '500px' }}>
-              Click "Discover Organization" to connect to your Monday.com account and visualize 
-              your organizational structure with interactive diagrams.
+              Click "Sync Priority Workspaces" to connect to your Monday.com account and visualize 
+              your core CRM, Production, Lab, and Purchasing operations with intelligent diagrams.
             </p>
           </div>
         )}
@@ -547,10 +517,10 @@ export default function HomePage() {
           }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🔄</div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-              Discovering Organization...
+              Syncing Priority Workspaces...
             </h3>
             <p style={{ color: '#64748b', textAlign: 'center' }}>
-              Fetching workspaces, boards, and relationships from Monday.com...
+              Fetching boards and relationships from your core Monday.com workspaces...
             </p>
           </div>
         )}
@@ -570,12 +540,12 @@ export default function HomePage() {
           }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>📊</div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-              Select a Board for Connections
+              {diagramType === 'connections' ? 'Select a Board' : 'Preparing Diagram'}
             </h3>
             <p style={{ color: '#64748b', textAlign: 'center' }}>
               {diagramType === 'connections' 
-                ? 'Choose a board from the dropdown above to see its connections.'
-                : 'Preparing diagram...'}
+                ? 'Choose a board from the dropdown above to explore its connections.'
+                : 'Generating your priority workspace visualization...'}
             </p>
           </div>
         )}
@@ -595,10 +565,10 @@ export default function HomePage() {
           }}>
             <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚡</div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-              Generating Diagram...
+              Generating Intelligent Diagram...
             </h3>
             <p style={{ color: '#64748b', textAlign: 'center' }}>
-              Creating your interactive organizational visualization...
+              Creating actionable visualization with board health, relationships, and activity insights...
             </p>
           </div>
         )}
@@ -612,6 +582,36 @@ export default function HomePage() {
           />
         )}
       </section>
+
+      {/* Tips Section */}
+      {orgData.data && (
+        <section style={{ marginTop: '3rem' }}>
+          <div style={{
+            backgroundColor: '#f0f9ff',
+            border: '1px solid #0ea5e9',
+            borderRadius: '0.5rem',
+            padding: '1.5rem'
+          }}>
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600', color: '#0c4a6e' }}>
+              💡 Pro Tips
+            </h3>
+            <ul style={{ margin: 0, paddingLeft: '1.5rem', color: '#075985', fontSize: '0.875rem' }}>
+              <li style={{ marginBottom: '0.5rem' }}>
+                <strong>Workspace Overview:</strong> See all boards with health indicators and item counts
+              </li>
+              <li style={{ marginBottom: '0.5rem' }}>
+                <strong>Board Connections:</strong> Explore how boards connect through mirror columns and connect boards
+              </li>
+              <li style={{ marginBottom: '0.5rem' }}>
+                <strong>Health Analysis:</strong> Identify inactive boards and optimization opportunities
+              </li>
+              <li>
+                Health indicators: ✅ Healthy • ⚠️ Needs attention • 😴 Inactive
+              </li>
+            </ul>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

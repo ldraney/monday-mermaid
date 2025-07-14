@@ -1,7 +1,7 @@
 // lib/monday-api.ts
-// Monday.com GraphQL API client for organizational discovery and management
+// Monday.com GraphQL API client FOCUSED on priority workspaces only
 
-import { config } from './config'
+import { config, getPriorityWorkspaceNames } from './config'
 import type { 
   MondayWorkspace, 
   MondayBoard, 
@@ -56,33 +56,48 @@ export class MondayAPI {
   }
 
   // =============================================================================
-  // ORGANIZATIONAL DISCOVERY METHODS
+  // PRIORITY WORKSPACE FOCUSED DISCOVERY
   // =============================================================================
 
-  async discoverOrganization(options: DiscoveryOptions = {}): Promise<OrganizationalStructure> {
-    console.log('🔍 Starting Monday.com organizational discovery...')
+  async discoverPriorityWorkspaces(options: DiscoveryOptions = {}): Promise<OrganizationalStructure> {
+    console.log('🎯 Starting FOCUSED discovery for priority workspaces...')
     
     const startTime = Date.now()
+    const priorityWorkspaceNames = getPriorityWorkspaceNames()
     
-    // Fetch all organizational data in parallel
-    const [workspaces, users] = await Promise.all([
-      this.getWorkspaces(),
-      this.getUsers(),
-    ])
+    console.log(`🔍 Looking for workspaces: ${priorityWorkspaceNames.join(', ')}`)
+    
+    // Step 1: Get all workspaces and filter to priority ones
+    const allWorkspaces = await this.getWorkspaces()
+    const priorityWorkspaces = allWorkspaces.filter(workspace => 
+      priorityWorkspaceNames.includes(workspace.name)
+    )
 
-    // Fetch boards for all workspaces
-    const allBoards: MondayBoard[] = []
-    for (const workspace of workspaces) {
-      const workspaceBoards = await this.getBoardsInWorkspace(workspace.id, options)
-      allBoards.push(...workspaceBoards)
+    if (priorityWorkspaces.length === 0) {
+      throw new Error(`No priority workspaces found. Looking for: ${priorityWorkspaceNames.join(', ')}. Found workspaces: ${allWorkspaces.map(w => w.name).join(', ')}`)
     }
 
-    // Basic health metrics calculation
+    console.log(`✅ Found ${priorityWorkspaces.length}/${priorityWorkspaceNames.length} priority workspaces`)
+    priorityWorkspaces.forEach(ws => console.log(`   - ${ws.name} (ID: ${ws.id})`))
+
+    // Step 2: Get users (organizational context)
+    const users = await this.getUsers()
+
+    // Step 3: Get boards ONLY for priority workspaces
+    const allBoards: MondayBoard[] = []
+    for (const workspace of priorityWorkspaces) {
+      console.log(`📋 Fetching boards for ${workspace.name}...`)
+      const workspaceBoards = await this.getBoardsInWorkspace(workspace.id, options)
+      allBoards.push(...workspaceBoards)
+      console.log(`   Found ${workspaceBoards.length} boards`)
+    }
+
+    // Calculate health metrics for priority workspaces only
     const activeBoards = allBoards.filter(board => board.state === 'active')
     const totalItems = allBoards.reduce((sum, board) => sum + (board.items_count || 0), 0)
 
     const healthMetrics = {
-      totalWorkspaces: workspaces.length,
+      totalWorkspaces: priorityWorkspaces.length,
       totalBoards: allBoards.length,
       activeBoards: activeBoards.length,
       archivedBoards: allBoards.filter(board => board.state === 'archived').length,
@@ -98,11 +113,11 @@ export class MondayAPI {
     }
 
     const duration = Date.now() - startTime
-    console.log(`✅ Discovery complete in ${duration}ms`)
-    console.log(`   Found: ${workspaces.length} workspaces, ${allBoards.length} boards, ${totalItems} items`)
+    console.log(`✅ Priority workspace discovery complete in ${duration}ms`)
+    console.log(`📊 Final results: ${priorityWorkspaces.length} workspaces, ${allBoards.length} boards, ${totalItems} items`)
 
     return {
-      workspaces,
+      workspaces: priorityWorkspaces,
       boards: allBoards,
       relationships: [], // Will be discovered separately
       healthMetrics,
@@ -111,8 +126,16 @@ export class MondayAPI {
     }
   }
 
+  // Legacy method for backward compatibility
+  async discoverOrganization(options: DiscoveryOptions = {}): Promise<OrganizationalStructure> {
+    return this.discoverPriorityWorkspaces(options)
+  }
+
+  // =============================================================================
+  // WORKSPACE AND BOARD METHODS (enhanced for priority focus)
+  // =============================================================================
+
   async getWorkspaces(): Promise<MondayWorkspace[]> {
-    // Fixed query - only use fields that actually exist
     const query = `
       query GetWorkspaces {
         workspaces {
@@ -126,22 +149,40 @@ export class MondayAPI {
 
     const result = await this.query<{ workspaces: any[] }>(query)
     
-    // Transform to match our interface
     return result.workspaces.map(workspace => ({
       id: workspace.id,
       name: workspace.name,
       kind: workspace.kind || 'open',
       description: workspace.description || null,
-      // Remove settings field since it doesn't work
     }))
+  }
+
+  async getPriorityWorkspaces(): Promise<MondayWorkspace[]> {
+    const allWorkspaces = await this.getWorkspaces()
+    const priorityNames = getPriorityWorkspaceNames()
+    
+    const priorityWorkspaces = allWorkspaces.filter(workspace => 
+      priorityNames.includes(workspace.name)
+    )
+
+    const found = priorityWorkspaces.map(w => w.name)
+    const missing = priorityNames.filter(name => !found.includes(name))
+    
+    if (missing.length > 0) {
+      console.warn(`⚠️ Missing priority workspaces: ${missing.join(', ')}`)
+      console.log(`Available workspaces: ${allWorkspaces.map(w => w.name).join(', ')}`)
+    }
+
+    return priorityWorkspaces
   }
 
   async getBoardsInWorkspace(workspaceId: string, options: DiscoveryOptions = {}): Promise<MondayBoard[]> {
     const includeArchived = options.includeArchived ? ', archived' : ''
+    const limit = options.maxBoards ? `, limit: ${options.maxBoards}` : ''
     
     const query = `
       query GetBoardsInWorkspace($workspaceId: [ID!]) {
-        boards(workspace_ids: $workspaceId, state: active${includeArchived}) {
+        boards(workspace_ids: $workspaceId, state: active${includeArchived}${limit}) {
           id
           name
           description
@@ -242,20 +283,17 @@ export class MondayAPI {
   }
 
   // =============================================================================
-  // RELATIONSHIP DISCOVERY METHODS
+  // ENHANCED RELATIONSHIP DISCOVERY FOR PRIORITY WORKSPACES
   // =============================================================================
 
   async getBoardConnections(boardId: string): Promise<any[]> {
-    // Monday.com connections are complex - this is a simplified version
-    // Real implementation would need to check:
-    // 1. Connect boards columns
-    // 2. Mirror columns
-    // 3. Dependencies 
-    // 4. Automations that link boards
+    console.log(`🔗 Discovering connections for board ${boardId}`)
     
     const query = `
       query GetBoardConnections($boardId: [ID!]) {
         boards(ids: $boardId) {
+          id
+          name
           columns {
             id
             title
@@ -266,85 +304,132 @@ export class MondayAPI {
       }
     `
 
-    const result = await this.query<{ boards: { columns: MondayColumn[] }[] }>(query, {
+    const result = await this.query<{ boards: { id: string, name: string, columns: MondayColumn[] }[] }>(query, {
       boardId: [boardId]
     })
 
-    // Parse connect board columns from settings
+    if (!result.boards || result.boards.length === 0) {
+      return []
+    }
+
+    const board = result.boards[0]
     const connections: any[] = []
     
-    if (result.boards[0]) {
-      for (const column of result.boards[0].columns) {
-        if (column.type === 'connect_boards' && column.settings_str) {
-          try {
-            const settings = JSON.parse(column.settings_str)
-            if (settings.boardIds) {
+    // Parse connect board columns and mirror columns
+    for (const column of board.columns) {
+      if (column.type === 'connect_boards' && column.settings_str) {
+        try {
+          const settings = JSON.parse(column.settings_str)
+          if (settings.boardIds && Array.isArray(settings.boardIds)) {
+            for (const targetBoardId of settings.boardIds) {
               connections.push({
                 sourceBoard: boardId,
-                targetBoards: settings.boardIds,
+                sourceBoardName: board.name,
+                targetBoard: targetBoardId,
                 type: 'connect',
                 columnId: column.id,
                 columnTitle: column.title,
+                connectionDetails: `Connect boards via "${column.title}"`
               })
             }
-          } catch (e) {
-            // Ignore parsing errors
           }
+        } catch (e) {
+          console.warn(`Failed to parse connect_boards settings for column ${column.id}:`, e)
+        }
+      } else if (column.type === 'mirror' && column.settings_str) {
+        try {
+          const settings = JSON.parse(column.settings_str)
+          if (settings.boardId) {
+            connections.push({
+              sourceBoard: boardId,
+              sourceBoardName: board.name,
+              targetBoard: settings.boardId,
+              type: 'mirror',
+              columnId: column.id,
+              columnTitle: column.title,
+              connectionDetails: `Mirror column "${column.title}" from target board`
+            })
+          }
+        } catch (e) {
+          console.warn(`Failed to parse mirror settings for column ${column.id}:`, e)
         }
       }
     }
 
+    console.log(`🔗 Found ${connections.length} connections for board ${board.name}`)
     return connections
   }
 
-  // =============================================================================
-  // BOARD MANAGEMENT METHODS (for future management features)
-  // =============================================================================
-
-  async createBoard(workspaceId: string, name: string, kind: string = 'public'): Promise<MondayBoard> {
-    const query = `
-      mutation CreateBoard($name: String!, $kind: BoardKind!, $workspaceId: ID!) {
-        create_board(name: $name, kind: $kind, workspace_id: $workspaceId) {
-          id
-          name
-          state
-          workspace {
-            id
-            name
-          }
-        }
+  async discoverAllPriorityBoardRelationships(): Promise<any[]> {
+    console.log('🕸️ Discovering ALL relationships within priority workspaces...')
+    
+    const priorityWorkspaces = await this.getPriorityWorkspaces()
+    const allConnections: any[] = []
+    
+    for (const workspace of priorityWorkspaces) {
+      const workspaceBoards = await this.getBoardsInWorkspace(workspace.id)
+      
+      for (const board of workspaceBoards) {
+        const boardConnections = await this.getBoardConnections(board.id)
+        allConnections.push(...boardConnections)
       }
-    `
+    }
 
-    const result = await this.query<{ create_board: MondayBoard }>(query, {
-      name,
-      kind,
-      workspaceId,
-    })
-
-    return result.create_board
-  }
-
-  async archiveBoard(boardId: string): Promise<boolean> {
-    const query = `
-      mutation ArchiveBoard($boardId: ID!) {
-        archive_board(board_id: $boardId) {
-          id
-          state
-        }
-      }
-    `
-
-    const result = await this.query<{ archive_board: { id: string, state: string } }>(query, {
-      boardId,
-    })
-
-    return result.archive_board.state === 'archived'
+    console.log(`🕸️ Total connections discovered: ${allConnections.length}`)
+    return allConnections
   }
 
   // =============================================================================
-  // UTILITY METHODS
+  // VALIDATION AND UTILITY METHODS
   // =============================================================================
+
+  async validatePriorityWorkspaceSetup(): Promise<{
+    isValid: boolean
+    issues: string[]
+    recommendations: string[]
+  }> {
+    const issues: string[] = []
+    const recommendations: string[] = []
+    
+    try {
+      const priorityNames = getPriorityWorkspaceNames()
+      const allWorkspaces = await this.getWorkspaces()
+      const found = allWorkspaces.filter(w => priorityNames.includes(w.name))
+      
+      if (found.length === 0) {
+        issues.push('No priority workspaces found in Monday.com')
+        recommendations.push('Check workspace names in config.priorityWorkspaces.workspaceNames')
+        recommendations.push(`Available workspaces: ${allWorkspaces.map(w => w.name).join(', ')}`)
+      } else if (found.length < priorityNames.length) {
+        const missing = priorityNames.filter(name => !found.map(w => w.name).includes(name))
+        issues.push(`Missing workspaces: ${missing.join(', ')}`)
+        recommendations.push('Update config or check workspace names in Monday.com')
+      }
+
+      // Check board counts
+      for (const workspace of found) {
+        const boards = await this.getBoardsInWorkspace(workspace.id)
+        if (boards.length === 0) {
+          issues.push(`Workspace "${workspace.name}" has no boards`)
+        } else if (boards.length > 20) {
+          recommendations.push(`Workspace "${workspace.name}" has ${boards.length} boards - consider filtering`)
+        }
+      }
+
+      return {
+        isValid: issues.length === 0,
+        issues,
+        recommendations
+      }
+      
+    } catch (error) {
+      return {
+        isValid: false,
+        issues: [`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
+        recommendations: ['Check Monday.com API connectivity and permissions']
+      }
+    }
+  }
 
   async testConnection(): Promise<boolean> {
     try {
@@ -359,6 +444,15 @@ export class MondayAPI {
       
       const result = await this.query<{ me: { id: string, name: string } }>(query)
       console.log(`✅ Monday.com API connected successfully as ${result.me.name}`)
+      
+      // Also validate priority workspace setup
+      const validation = await this.validatePriorityWorkspaceSetup()
+      if (!validation.isValid) {
+        console.warn('⚠️ Priority workspace setup issues:')
+        validation.issues.forEach(issue => console.warn(`   - ${issue}`))
+        validation.recommendations.forEach(rec => console.log(`💡 ${rec}`))
+      }
+      
       return true
     } catch (error) {
       console.error('❌ Monday.com API connection failed:', error)
@@ -383,16 +477,20 @@ export class MondayAPI {
 // Create a default API instance
 export const mondayApi = new MondayAPI()
 
-// Helper function for quick testing
-export async function quickDiscovery(): Promise<OrganizationalStructure> {
-  return await mondayApi.discoverOrganization({
+// Helper function for quick priority workspace discovery
+export async function quickPriorityDiscovery(): Promise<OrganizationalStructure> {
+  return await mondayApi.discoverPriorityWorkspaces({
     includeArchived: false,
-    includeItems: false,
-    maxBoards: 50, // Limit for quick testing
+    maxBoards: 50, // Reasonable limit per workspace
   })
 }
 
-// Helper function to test API connection
+// Helper function to test API connection and validate setup
 export async function testMondayConnection(): Promise<boolean> {
   return await mondayApi.testConnection()
+}
+
+// Helper function to get only priority workspaces
+export async function getPriorityWorkspaces(): Promise<MondayWorkspace[]> {
+  return await mondayApi.getPriorityWorkspaces()
 }
